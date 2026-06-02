@@ -1,6 +1,9 @@
 # Tiny Secrets Manager
 
-A lightweight, high-performance, XChaCha20-Poly1305 encrypted secrets manager backed by a pure Go SQLite implementation. Designed for localized machine-to-machine (M2M) deployments and administrative ease, providing a secure, hardened enclosure for sensitive configuration.
+[![Build and Publish Docker Image](https://github.com/abnabnabn/secrets/actions/workflows/docker-publish.yml/badge.svg)](https://github.com/abnabnabn/secrets/actions/workflows/docker-publish.yml)
+
+A lightweight, high-performance, XChaCha20-Poly1305 encrypted secrets manager backed by a pure Go SQLite implementation.
+ Designed for localized machine-to-machine (M2M) deployments and administrative ease, providing a secure, hardened enclosure for sensitive configuration.
 
 ## Key Features
 
@@ -69,57 +72,57 @@ docker compose up -d
 ## API & Integration
 
 ### Standalone CLI
-The project includes two versions of a standalone CLI for managing secrets:
-1.  **Go CLI (`bin/tsm`)**: Robust, statically linked (no dependencies), works on any OS. (~6MB)
-2.  **Bash CLI (`tsm.sh`)**: Extremely minimal (~2KB), requires `curl` and `jq`.
+The project includes a robust, statically linked Go CLI for managing and injecting secrets.
 
 **1. Setup:**
 ```bash
-# To build the Go CLI:
+# Build the Go CLI
 make build-cli
-
-# To use the Bash CLI:
-chmod +x tsm.sh
 ```
 
 **2. Configuration:**
-Set environment variables or use the `login` command:
-```bash
-# Option A: Environment Variables
-export TSM_URL="http://localhost:8090"
-export TSM_TOKEN="your-token-here"
+Tiny Secrets Manager uses a **Context-Based Authentication** system. Instead of global environment variables, you link specific directories to specific machine tokens. This information is stored in a protected central file (`~/.tsm.json`).
 
-# Option B: Persistent Login
-./bin/tsm login http://localhost:8090 your-token-here
+```bash
+# 1. Set your server URL
+./bin/tsm login http://localhost:8090
+
+# 2. Link your current project directory to a specific token
+cd ~/projects/my-app
+./bin/tsm auth --link your-machine-token-here
+
+# 3. Audit active contexts and validate tokens
+./bin/tsm auth --status
+
+# 4. Clean up stale or redundant directory mappings
+./bin/tsm auth --tidy
 ```
+
+Once linked, the CLI will automatically use the correct token whenever you are inside that directory or its subdirectories.
 
 **3. Usage Examples:**
 ```bash
+# No token needed - automatically resolved from context
 ./bin/tsm ls
 ./bin/tsm get app.db.password
-./bin/tsm put app.api.key "value"
 ```
+
+**4. Context Management Details:**
+*   **`--status`**: Performs a read-only audit of all mapped directories. It masks tokens (e.g., `tsm_tk_abcd...1234`) and pings the server to verify if each token is still valid or has been revoked.
+*   **`--tidy`**: Performs local housekeeping. It removes entries for directories that no longer exist on your machine and prunes redundant child-directory mappings if a parent is already linked to the same token.
 
 **4. Running Applications with Secrets:**
 The `run` command allows you to execute programs with environment variables injected directly from the secrets manager.
 
-*   **Explicit Mapping:** Create a `tsm.env` file in your project root. Each line maps an environment variable name to a TSM secret path:
+*   **Explicit Mapping:** Create a `tsm.env` file in your project root:
     ```text
     DATABASE_URL=app.prod.db_url
     API_KEY=app.prod.api_key
     ```
-*   **Local Overrides:** If a standard `.env` file (literals) exists in the same directory, its values will take priority over TSM secrets, allowing for easy local development overrides.
-*   **Execution:**
+*   **Automatic Resolution:** The CLI resolves the token based on your current directory context.
+*   **Explicit Token (Override):** You can manually provide a token for a single run using the `--token` flag:
     ```bash
-    # Automatically loads tsm.env and .env
-    ./bin/tsm run -- ./my-app --port 8080
-
-    # Using the Bash CLI:
-    ./tsm.sh run -- ./my-app
-    ```
-*   **CLI Overrides:** You can also pass explicit environment variables that take the highest priority:
-    ```bash
-    ./bin/tsm run -e DEBUG=true -- ./my-app
+    ./bin/tsm run --token xxxxx -- ./my-app
     ```
 
 ### Ansible Integration
@@ -140,6 +143,8 @@ To securely fetch secrets dynamically within Ansible playbooks, use the provided
 *   **`make setup`**: Full initialization (tidy + build). Recommended for first-time use.
 *   **`make build`**: Compiles stripped, optimized binaries for the server and CLI.
 *   **`make run`**: Builds the server and starts it.
-*   **`make test`**: Runs the Go test suite with the race detector enabled.
+*   **`make test`**: Runs the Go test suite with the race detector enabled. (Executed automatically on push via GitHub Actions).
 *   **`make clean`**: Removes binaries, local database files, and the `config.json`.
 *   **`make tidy`**: Cleans up and synchronizes Go module dependencies.
+*   **`make dev-link`**: Creates symlinks in `~/.local/bin` to your local project binaries. Allows you to run `tsm` from any directory while developing. No root required.
+*   **`make dev-unlink`**: Removes the development symlinks.

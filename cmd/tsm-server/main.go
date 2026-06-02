@@ -130,10 +130,10 @@ func main() {
 		fmt.Println("")
 		fmt.Println(`  [IMPORTANT] These credentials have been seeded into the database.`)
 		fmt.Println(`              This is the ONLY time the password and token will be shown.`)
-		fmt.Println(`========================================================================` + "\n")
+		fmt.Println(`========================================================================`)
 	}
 
-	fmt.Println(`
+	fmt.Print(`
   _____  _____ __  __ 
  |_   _|/ ____|  \/  |
    | | | (___ | \  / |
@@ -141,6 +141,7 @@ func main() {
    | |  ____) | |  | |
    |_| |_____/|_|  |_|
   Tiny Secrets Manager
+
 `)
 
 	srv := api.NewServer(db, cfg, logger)

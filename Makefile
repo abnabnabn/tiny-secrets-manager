@@ -1,10 +1,11 @@
-.PHONY: all build build-server build-cli run test clean tidy setup run-env install uninstall
+.PHONY: all build build-server build-cli run test clean tidy setup run-env install uninstall dev-link dev-unlink
 
 BIN_DIR := bin
 BINARY := $(BIN_DIR)/tiny-secrets-manager
 CLI_BINARY := $(BIN_DIR)/tsm
 MAIN_PKG := ./cmd/tsm-server
 CLI_PKG := ./cmd/tsm-cli
+LOCAL_BIN_DIR := $(HOME)/.local/bin
 
 all: tidy build
 
@@ -71,3 +72,24 @@ install: build
 uninstall:
 	@echo "Removing binaries from $(PREFIX)/bin..."
 	@rm -f $(PREFIX)/bin/tiny-secrets-manager $(PREFIX)/bin/tsm
+
+dev-link: build
+	@echo "Creating symlinks in $(LOCAL_BIN_DIR)..."
+	@mkdir -p $(LOCAL_BIN_DIR)
+	@ln -sf $(CURDIR)/$(BINARY) $(LOCAL_BIN_DIR)/tiny-secrets-manager
+	@ln -sf $(CURDIR)/$(CLI_BINARY) $(LOCAL_BIN_DIR)/tsm
+	@if echo ":$(PATH):" | grep -q ":$(LOCAL_BIN_DIR):"; then \
+		echo "Success! Binaries are linked and available in your PATH."; \
+	else \
+		echo ""; \
+		echo "========================================================================"; \
+		echo "WARNING: $(LOCAL_BIN_DIR) is NOT in your PATH."; \
+		echo "To run the binaries from anywhere, add this to your .bashrc or .zshrc:"; \
+		echo "  export PATH=\"\$$PATH:$(LOCAL_BIN_DIR)\""; \
+		echo "========================================================================"; \
+		echo ""; \
+	fi
+
+dev-unlink:
+	@echo "Removing symlinks from $(LOCAL_BIN_DIR)..."
+	@rm -f $(LOCAL_BIN_DIR)/tiny-secrets-manager $(LOCAL_BIN_DIR)/tsm
