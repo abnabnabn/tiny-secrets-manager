@@ -451,8 +451,6 @@
             );
         }
 
-        // TokenManager handles the lifecycle of machine identities, including
-        // provisioning new tokens, editing policies, and cloning existing ones.
         function TokenManager({ tokens, refreshTokens }) {
             const [name, setName] = useState('');
             const [policies, setPolicies] = useState([{ prefix: '', methods: ['GET', 'LIST'] }]);
@@ -542,33 +540,12 @@
                 setPolicies([{ prefix: '', methods: ['GET', 'LIST'] }]);
             };
 
-            const handleRegenerateRecoveryKeys = async () => {
-                if (!confirm("Are you sure? This will immediately invalidate all old emergency recovery keys.")) return;
-                setIsRegenerating(true);
-                try {
-                    const res = await fetch(`${API_BASE}/v1/recovery-keys/regenerate`, {
-                        ...fetchConfig,
-                        method: 'POST'
-                    });
-                    if (res.ok) {
-                        const data = await res.json();
-                        setRecoveryKeys(data.recovery_keys);
-                    } else {
-                        alert("Failed to regenerate recovery keys.");
-                    }
-                } catch (e) {
-                    alert("Network error.");
-                } finally {
-                    setIsRegenerating(false);
-                }
-            };
-
             return (
                 <div className="grid grid-cols-1 md:grid-cols-2 gap-8">
                     <div className="space-y-6">
                         <div className="bg-gray-800 rounded-lg border border-gray-700 overflow-hidden">
                             <h3 className="text-lg font-semibold p-4 border-b border-gray-700">Active Machine Tokens</h3>
-                            <ul className="divide-y divide-gray-700 max-h-[400px] overflow-y-auto">
+                            <ul className="divide-y divide-gray-700 max-h-[600px] overflow-y-auto">
                                 {tokens.map(t => (
                                     <li key={t.name} className="p-4 flex flex-col gap-2">
                                         <div className="flex justify-between items-start">
@@ -590,34 +567,6 @@
                                     </li>
                                 ))}
                             </ul>
-                        </div>
-
-                        <div className="bg-gray-800 p-6 rounded-lg border border-red-950">
-                            <h3 className="text-lg font-semibold text-red-400 mb-2">Emergency Recovery Management</h3>
-                            <p className="text-sm text-gray-400 mb-4">
-                                Regenerating recovery keys invalidates the previous set. Use these keys to recover database access if your master key configuration is lost.
-                            </p>
-                            <button 
-                                onClick={handleRegenerateRecoveryKeys} 
-                                disabled={isRegenerating}
-                                className="bg-red-900 hover:bg-red-800 text-white font-semibold px-4 py-2 rounded text-sm transition disabled:opacity-50"
-                            >
-                                {isRegenerating ? "Regenerating..." : "Regenerate Recovery Keys"}
-                            </button>
-
-                            {recoveryKeys.length > 0 && (
-                                <div className="mt-4 bg-red-950/40 border border-red-900 rounded p-4">
-                                    <h4 className="text-sm font-semibold text-red-300 mb-2">New Recovery Keys (Printed Once):</h4>
-                                    <p className="text-xs text-gray-400 mb-3">Copy these keys immediately. They are not stored in plaintext on disk or in the database.</p>
-                                    <ul className="space-y-2">
-                                        {recoveryKeys.map((k, idx) => (
-                                            <li key={idx} className="bg-black p-2 rounded font-mono text-xs break-all select-all border border-red-900/30">
-                                                <span className="text-red-500 mr-2">Key {idx}:</span>{k}
-                                            </li>
-                                        ))}
-                                    </ul>
-                                </div>
-                            )}
                         </div>
                     </div>
                     
@@ -685,7 +634,9 @@
                 </div>
             );
         }
->
-                </div>
-            );
-        }
+
+        const root = ReactDOM.createRoot(document.getElementById('root'));
+        root.render(<App />);
+    </script>
+</body>
+</html>
