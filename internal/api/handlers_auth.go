@@ -45,14 +45,15 @@ func (s *Server) handleLogin(w http.ResponseWriter, r *http.Request) {
 
 	// Generate a session token
 	raw := make([]byte, 32)
-	rand.Read(raw)
+	_, _ = rand.Read(raw)
 	sessionToken := base64.RawURLEncoding.EncodeToString(raw)
 	tokenHash := sha256.Sum256([]byte(sessionToken))
 
 	// Store session token in DB with admin privileges
 	// We use a unique name for each session to avoid collisions
 	sessionName := "session_" + req.Username + "_" + strconv.FormatInt(time.Now().UnixNano(), 10)
-	if err := s.store.PutRole(ctx, sessionName, tokenHash[:], []byte("[]"), true); err != nil {
+	expiresAt := time.Now().Add(1 * time.Hour)
+	if err := s.store.PutRole(ctx, sessionName, tokenHash[:], []byte("[]"), true, &expiresAt); err != nil {
 		s.logger.Error("failed to store session token", "err", err)
 		http.Error(w, "internal server error", http.StatusInternalServerError)
 		return
@@ -67,7 +68,10 @@ func (s *Server) handleLogin(w http.ResponseWriter, r *http.Request) {
 		SameSite: s.getSameSiteMode(),
 		MaxAge:   86400,
 	})
-	w.WriteHeader(http.StatusNoContent)
+	w.Header().Set("Content-Type", "application/json")
+	if err := json.NewEncoder(w).Encode(map[string]string{"token": sessionToken}); err != nil {
+		s.logger.Error("failed to encode token response", "err", err)
+	}
 }
 
 func (s *Server) handleLogout(w http.ResponseWriter, r *http.Request) {

@@ -37,13 +37,12 @@ func setupTestServer(t *testing.T) (*Server, *store.Store, *http.ServeMux, strin
 	// Seed admin token
 	adminToken := "test-admin-token"
 	tokenHash := sha256.Sum256([]byte(adminToken))
-	policies := []config.Policy{{Prefix: "*", Methods: []string{"*"}}}
-	pJSON, _ := json.Marshal(policies)
-	if err := db.PutRole(context.Background(), "admin", tokenHash[:], pJSON, true); err != nil {
-		t.Fatalf("failed to insert admin role: %v", err)
+	pJSON, _ := json.Marshal([]config.Policy{{Prefix: "*", Methods: []string{"*"}}})
+	if err := db.PutRole(context.Background(), "admin", tokenHash[:], pJSON, true, nil); err != nil {
+		t.Fatalf("failed to insert mock admin token: %v", err)
 	}
 
-	srv := NewServer(db, cfg, logger)
+	srv := NewServer(db, cfg, logger, "test-version")
 	mux := http.NewServeMux()
 	srv.RegisterRoutes(mux)
 

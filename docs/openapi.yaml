@@ -59,6 +59,10 @@ components:
         created_at:
           type: string
           format: date-time
+        expires_at:
+          type: string
+          format: date-time
+          nullable: true
 
 security:
   - bearerAuth: []
@@ -222,6 +226,11 @@ paths:
                   type: array
                   items:
                     $ref: '#/components/schemas/Policy'
+                expires_at:
+                  type: string
+                  format: date-time
+                  nullable: true
+                  description: Optional expiration date for the token
       responses:
         '200':
           description: Returns the raw token string (only shown once)
@@ -254,6 +263,11 @@ paths:
                   type: array
                   items:
                     $ref: '#/components/schemas/Policy'
+                expires_at:
+                  type: string
+                  format: date-time
+                  nullable: true
+                  description: Optional expiration date for the token
       responses:
         '204':
           description: Role policies updated successfully
@@ -308,3 +322,41 @@ paths:
                     type: array
                     items:
                       type: string
+
+  /system/settings:
+    get:
+      summary: Get System Settings
+      description: Requires Admin privileges. Returns current system configurations like backup targets.
+      responses:
+        '200':
+          description: A map of system settings
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties:
+                  type: string
+    put:
+      summary: Update System Settings
+      description: Requires Admin privileges. Updates one or more system settings.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties:
+                type: string
+      responses:
+        '200':
+          description: Settings successfully updated
+
+  /system/backup:
+    post:
+      summary: Trigger Manual Backup
+      description: Requires Admin privileges. Immediately forces a synchronous database backup.
+      responses:
+        '200':
+          description: Backup completed successfully
+        '500':
+          description: Backup failed

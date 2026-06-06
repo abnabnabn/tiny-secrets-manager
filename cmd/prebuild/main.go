@@ -9,6 +9,8 @@ import (
 	"os/exec"
 	"path/filepath"
 	"runtime"
+	"strings"
+	"time"
 
 	"github.com/evanw/esbuild/pkg/api"
 )
@@ -20,8 +22,8 @@ var externalAssets = map[string]string{
 
 func main() {
 	// 1. Setup Directories
-	os.MkdirAll("public/assets", 0755)
-	os.MkdirAll("bin", 0755)
+	_ = os.MkdirAll("public/assets", 0755)
+	_ = os.MkdirAll("bin", 0755)
 
 	ensureTailwind()
 
@@ -31,7 +33,7 @@ func main() {
 	}
 
 	// 3. Create Proxies for ESBuild to map imports to window globals
-	os.WriteFile("ui/react-proxy.js", []byte(`
+	_ = os.WriteFile("ui/react-proxy.js", []byte(`
 export default window.React;
 export const useState = window.React.useState;
 export const useEffect = window.React.useEffect;
@@ -41,7 +43,7 @@ export const Fragment = window.React.Fragment;
 export const createElement = window.React.createElement;
 `), 0644)
 
-	os.WriteFile("ui/react-dom-proxy.js", []byte(`
+	_ = os.WriteFile("ui/react-dom-proxy.js", []byte(`
 export const createRoot = window.ReactDOM.createRoot;
 `), 0644)
 
@@ -91,7 +93,45 @@ export const createRoot = window.ReactDOM.createRoot;
 	if err != nil {
 		log.Fatalf("failed to read template: %v", err)
 	}
-	os.WriteFile("public/index.html", content, 0644)
+
+	timestamp := time.Now().Unix()
+	htmlStr := string(content)
+	htmlStr = strings.Replace(htmlStr, "/assets/app.js", fmt.Sprintf("/assets/app.js?v=%d", timestamp), 1)
+	htmlStr = strings.Replace(htmlStr, "/assets/style.css", fmt.Sprintf("/assets/style.css?v=%d", timestamp), 1)
+
+	_ = os.WriteFile("public/index.html", []byte(htmlStr), 0644)
+
+	// 7. Compile CLI binaries
+	fmt.Println("Compiling CLI binaries for distribution...")
+	targets := []struct{ OS, Arch string }{
+		{"linux", "amd64"},
+		{"linux", "arm64"},
+		{"darwin", "amd64"},
+		{"darwin", "arm64"},
+		{"windows", "amd64"},
+	}
+
+	version := "dev"
+	if out, err := exec.Command("git", "describe", "--tags", "--always", "--dirty").Output(); err == nil {
+		version = strings.TrimSpace(string(out))
+	}
+	ldflags := fmt.Sprintf("-s -w -X main.Version=%s", version)
+
+	_ = os.MkdirAll("bin/cli", 0755)
+	for _, t := range targets {
+		out := filepath.Join("bin/cli", fmt.Sprintf("tsm-%s-%s", t.OS, t.Arch))
+		if t.OS == "windows" {
+			out += ".exe"
+		}
+
+		cmd := exec.Command("go", "build", "-ldflags="+ldflags, "-trimpath", "-o", out, "./cmd/tsm-cli")
+		cmd.Env = append(os.Environ(), "GOOS="+t.OS, "GOARCH="+t.Arch, "CGO_ENABLED=0")
+		cmd.Stdout = os.Stdout
+		cmd.Stderr = os.Stderr
+		if err := cmd.Run(); err != nil {
+			log.Fatalf("failed to build cli for %s/%s: %v", t.OS, t.Arch, err)
+		}
+	}
 }
 
 func downloadIfMissing(path, url string) {
@@ -106,7 +146,7 @@ func downloadIfMissing(path, url string) {
 	defer resp.Body.Close()
 	f, _ := os.Create(path)
 	defer f.Close()
-	io.Copy(f, resp.Body)
+	_, _ = io.Copy(f, resp.Body)
 }
 
 func ensureTailwind() {
@@ -146,5 +186,5 @@ func ensureTailwind() {
 
 	url := fmt.Sprintf("https://github.com/tailwindlabs/tailwindcss/releases/latest/download/%s", binaryName)
 	downloadIfMissing(path, url)
-	os.Chmod(path, 0755)
+	_ = os.Chmod(path, 0755)
 }

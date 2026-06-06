@@ -119,12 +119,14 @@ function Dashboard({ identity }) {
                     <React.Fragment>
                         <button onClick={() => setView('roles')} className={`px-4 py-2 rounded transition-all ${view === 'roles' ? 'bg-gray-800 border-b-2 border-blue-500 text-white shadow-sm' : 'text-gray-400 hover:text-gray-200'}`}>Role Management</button>
                         <button onClick={() => setView('setup')} className={`px-4 py-2 rounded transition-all ${view === 'setup' ? 'bg-gray-800 border-b-2 border-blue-500 text-white shadow-sm' : 'text-gray-400 hover:text-gray-200'}`}>Setup & Recovery</button>
+                        <button onClick={() => setView('system')} className={`px-4 py-2 rounded transition-all ${view === 'system' ? 'bg-gray-800 border-b-2 border-blue-500 text-white shadow-sm' : 'text-gray-400 hover:text-gray-200'}`}>System Settings</button>
                     </React.Fragment>
                 )}
             </nav>
-            {view === 'secrets' && <SecretsManager identity={identity} roles={roles} filterRoleName={filterRoleName} setFilterRoleName={setFilterRoleName} />}
+            {view === 'secrets' && <SecretsManager identity={identity} roles={roles} filterRoleName={filterRoleName} setFilterRoleName={setFilterRoleName} refreshRoles={fetchRoles} />}
             {view === 'roles' && <RoleManager roles={roles} refreshRoles={fetchRoles} />}
             {view === 'setup' && <SetupManager />}
+            {view === 'system' && <SystemSettings />}
         </div>
     );
 }
@@ -191,7 +193,7 @@ function SetupManager() {
     );
 }
 
-function SecretsManager({ identity, roles, filterRoleName, setFilterRoleName }) {
+function SecretsManager({ identity, roles, filterRoleName, setFilterRoleName, refreshRoles }) {
     const [secrets, setSecrets] = useState([]);
     const [readSecret, setReadSecret] = useState(null);
     const [isAdding, setIsAdding] = useState(false);
@@ -199,6 +201,10 @@ function SecretsManager({ identity, roles, filterRoleName, setFilterRoleName }) 
     const [newKey, setNewKey] = useState('');
     const [newValue, setNewValue] = useState('');
     const [newEnvKey, setNewEnvKey] = useState('');
+    const [isImporting, setIsImporting] = useState(false);
+    const [importText, setImportText] = useState('');
+    const [importAnalysis, setImportAnalysis] = useState(null);
+    const [isImportProcessing, setIsImportProcessing] = useState(false);
 
     const getHeaders = useCallback(() => {
         const headers = { 'Content-Type': 'application/json' };
@@ -264,7 +270,9 @@ function SecretsManager({ identity, roles, filterRoleName, setFilterRoleName }) 
             }
         });
 
-        return [...groups.filter(g => g.items.length > 0), unmatched].filter(g => g.items.length > 0);
+        const validGroups = groups.filter(g => g.items.length > 0);
+        validGroups.sort((a, b) => a.name.localeCompare(b.name));
+        return [...validGroups, unmatched].filter(g => g.items.length > 0);
     }, [secrets, selectedRole]);
 
     const handleGet = async (key) => {
@@ -302,6 +310,49 @@ function SecretsManager({ identity, roles, filterRoleName, setFilterRoleName }) 
         else if (res.status === 403) alert('Permission Denied by Backend');
     };
 
+    const handleQuickAddPolicy = async (key) => {
+        if (!selectedRole) return;
+        const newPolicies = [...selectedRole.policies];
+        if (!newPolicies.some(p => p.prefix === key)) {
+            newPolicies.push({ prefix: key, methods: ['GET'] });
+        }
+        try {
+            const res = await fetch(`${API_BASE}/v1/roles/${selectedRole.name}`, {
+                ...fetchConfig,
+                method: 'PUT',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ policies: newPolicies })
+            });
+            if (res.ok) {
+                if (refreshRoles) await refreshRoles();
+            } else {
+                alert('Failed to update role');
+            }
+        } catch (e) {
+            alert('Error updating role');
+        }
+    };
+
+    const handleQuickRemovePolicy = async (key) => {
+        if (!selectedRole) return;
+        const newPolicies = selectedRole.policies.filter(p => p.prefix !== key);
+        try {
+            const res = await fetch(`${API_BASE}/v1/roles/${selectedRole.name}`, {
+                ...fetchConfig,
+                method: 'PUT',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ policies: newPolicies })
+            });
+            if (res.ok) {
+                if (refreshRoles) await refreshRoles();
+            } else {
+                alert('Failed to update role');
+            }
+        } catch (e) {
+            alert('Error updating role');
+        }
+    };
+
     const handleEdit = (key) => {
         setNewKey(key);
         setNewValue('Loading...'); // UI hint
@@ -329,6 +380,110 @@ function SecretsManager({ identity, roles, filterRoleName, setFilterRoleName }) 
         setNewEnvKey('');
         setIsAdding(true);
         setIsEditing(false);
+        setIsImporting(false);
+        setImportAnalysis(null);
+    };
+
+    const handleParseImport = async () => {
+        if (!importText.trim()) return;
+        setIsImportProcessing(true);
+        const lines = importText.split('\n');
+        const results = { new: [], overwrite: [], unchanged: [] };
+
+        for (let line of lines) {
+            line = line.trim();
+            if (!line || line.startsWith('#')) continue;
+            
+            if (line.startsWith('export ')) {
+                line = line.substring(7).trim();
+            }
+
+            const eqIdx = line.indexOf('=');
+            if (eqIdx === -1) continue;
+
+            const envKey = line.substring(0, eqIdx).trim();
+            let value = line.substring(eqIdx + 1).trim();
+            
+            if ((value.startsWith('"') && value.endsWith('"')) || (value.startsWith("'") && value.endsWith("'"))) {
+                value = value.substring(1, value.length - 1);
+            }
+
+            const vaultPath = envKey.toLowerCase().replace(/_/g, '.');
+
+            if (!secrets.includes(vaultPath)) {
+                results.new.push({ vaultPath, envKey, value });
+            } else {
+                try {
+                    const res = await fetch(`${API_BASE}/v1/secrets/${vaultPath}`, { ...fetchConfig, headers: getHeaders() });
+                    if (res.ok) {
+                        const data = await res.json();
+                        if (data.value === value) {
+                            results.unchanged.push({ vaultPath, envKey, value });
+                        } else {
+                            results.overwrite.push({ vaultPath, envKey, value, oldValue: data.value });
+                        }
+                    } else {
+                        results.overwrite.push({ vaultPath, envKey, value, oldValue: '*** Unable to read current value ***' });
+                    }
+                } catch (e) {
+                    results.overwrite.push({ vaultPath, envKey, value, oldValue: '*** Error reading current value ***' });
+                }
+            }
+        }
+        setImportAnalysis(results);
+        setIsImportProcessing(false);
+    };
+
+    const handleConfirmImport = async () => {
+        setIsImportProcessing(true);
+        const toProcess = [...importAnalysis.new, ...importAnalysis.overwrite];
+        let errors = 0;
+
+        for (const item of toProcess) {
+            try {
+                const res = await fetch(`${API_BASE}/v1/secrets/${item.vaultPath}`, {
+                    ...fetchConfig,
+                    method: 'PUT',
+                    headers: getHeaders(),
+                    body: JSON.stringify({ value: item.value, env_key: item.envKey })
+                });
+                if (!res.ok) errors++;
+            } catch (e) {
+                errors++;
+            }
+        }
+
+        setIsImportProcessing(false);
+        if (errors > 0) {
+            alert(`Import completed with ${errors} errors.`);
+        }
+
+        if (selectedRole && toProcess.length > 0) {
+            const newPolicies = [...selectedRole.policies];
+            let changed = false;
+            for (const item of toProcess) {
+                if (!newPolicies.some(p => p.prefix === item.vaultPath)) {
+                    newPolicies.push({ prefix: item.vaultPath, methods: ['GET'] });
+                    changed = true;
+                }
+            }
+            if (changed) {
+                try {
+                    const rRes = await fetch(`${API_BASE}/v1/roles/${selectedRole.name}`, {
+                        ...fetchConfig,
+                        method: 'PUT',
+                        headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify({ policies: newPolicies })
+                    });
+                    if (rRes.ok && refreshRoles) await refreshRoles();
+                } catch (e) {
+                    console.error('Failed to update role with imported variables');
+                }
+            }
+        }
+
+        setIsImporting(false);
+        fetchSecrets();
     };
 
     const canPutAnything = useMemo(() => {
@@ -342,14 +497,30 @@ function SecretsManager({ identity, roles, filterRoleName, setFilterRoleName }) 
                 <div className="p-4 border-b border-gray-700 flex justify-between items-center bg-gray-900/50">
                     <h3 className="text-lg font-semibold">Secret Paths</h3>
                     <div className="flex gap-2">
-                        {identity.is_admin && !isAdding && !isEditing && (
-                            <button 
-                                onClick={startAdd} 
-                                disabled={selectedRole && !canPutAnything}
-                                className="bg-green-700 hover:bg-green-600 disabled:bg-gray-700 disabled:text-gray-500 disabled:cursor-not-allowed text-xs px-2 py-1 rounded transition shadow-sm"
-                            >
-                                Add Secret
-                            </button>
+                        {identity.is_admin && !isAdding && !isEditing && !isImporting && (
+                            <React.Fragment>
+                                <button 
+                                    onClick={() => {
+                                        setIsImporting(true);
+                                        setImportText('');
+                                        setImportAnalysis(null);
+                                        setReadSecret(null);
+                                        setIsAdding(false);
+                                        setIsEditing(false);
+                                    }} 
+                                    disabled={selectedRole && !canPutAnything}
+                                    className="bg-blue-700 hover:bg-blue-600 disabled:bg-gray-700 disabled:text-gray-500 disabled:cursor-not-allowed text-xs px-2 py-1 rounded transition shadow-sm"
+                                >
+                                    Import Env Vars
+                                </button>
+                                <button 
+                                    onClick={startAdd} 
+                                    disabled={selectedRole && !canPutAnything}
+                                    className="bg-green-700 hover:bg-green-600 disabled:bg-gray-700 disabled:text-gray-500 disabled:cursor-not-allowed text-xs px-2 py-1 rounded transition shadow-sm"
+                                >
+                                    Add Secret
+                                </button>
+                            </React.Fragment>
                         )}
                         {identity.is_admin && roles.filter(t => t.name !== identity.name).length > 0 && (
                             <select 
@@ -372,9 +543,14 @@ function SecretsManager({ identity, roles, filterRoleName, setFilterRoleName }) 
                             <div className="bg-gray-900/50 p-2 px-4 border-b border-gray-700/50 flex justify-between items-center">
                                 <span className="text-[10px] font-bold text-gray-500 font-mono uppercase tracking-wider">{group.name}</span>
                                 <div className="flex gap-1">
-                                    {group.methods.map(m => (
-                                        <span key={m} className="text-[9px] bg-blue-900/30 text-blue-300 px-1.5 py-0.5 rounded border border-blue-800/40 font-mono">{m}</span>
-                                    ))}
+                                    {['GET', 'LIST', 'PUT', 'DELETE'].map(m => {
+                                        const isLit = group.methods.includes(m) || group.methods.includes('*');
+                                        return (
+                                            <span key={m} className={`text-[9px] px-1.5 py-0.5 rounded border font-mono ${isLit ? 'bg-blue-900/30 text-blue-300 border-blue-800/40' : 'bg-gray-800/30 text-gray-600 border-gray-700/40'}`}>
+                                                {m}
+                                            </span>
+                                        );
+                                    })}
                                 </div>
                             </div>
                             <ul className="divide-y divide-gray-700/30">
@@ -384,12 +560,34 @@ function SecretsManager({ identity, roles, filterRoleName, setFilterRoleName }) 
                                         <li key={key} className="p-3 px-4 hover:bg-gray-700/30 flex justify-between items-center group transition-colors">
                                             <div className="flex items-center gap-3">
                                                 <span className="font-mono text-sm text-gray-200">{key}</span>
-                                                <span className={`text-[9px] font-bold px-1 rounded border ${p.LIST ? 'text-green-500 border-green-900/50 bg-green-950/20' : 'text-gray-600 border-gray-700 bg-gray-800/50'}`}>L</span>
+                                                <span title="Secret is listed in policy" className={`text-[9px] font-bold px-1 rounded border ${p.LIST ? 'text-green-500 border-green-900/50 bg-green-950/20' : 'text-gray-600 border-gray-700 bg-gray-800/50'}`}>L</span>
                                             </div>
-                                            <div className="flex gap-4 opacity-0 group-hover:opacity-100 transition">
+                                            <div className="flex gap-4 transition">
+                                                {identity.is_admin && selectedRole && (
+                                                    <React.Fragment>
+                                                        {!(p.GET || p.LIST || p.PUT || p.DELETE) ? (
+                                                            <button 
+                                                                onClick={() => handleQuickAddPolicy(key)}
+                                                                title="Add to Role"
+                                                                className="text-sm font-bold text-green-500 hover:text-green-400"
+                                                            >
+                                                                +
+                                                            </button>
+                                                        ) : selectedRole.policies.some(pol => pol.prefix === key) ? (
+                                                            <button 
+                                                                onClick={() => handleQuickRemovePolicy(key)}
+                                                                title="Remove from Role"
+                                                                className="text-sm font-bold text-red-500 hover:text-red-400"
+                                                            >
+                                                                -
+                                                            </button>
+                                                        ) : null}
+                                                    </React.Fragment>
+                                                )}
                                                 <button 
                                                     onClick={() => handleGet(key)} 
                                                     disabled={!p.GET}
+                                                    title="Read secret"
                                                     className={`text-sm font-semibold transition ${p.GET ? 'text-blue-400 hover:text-blue-300' : 'text-gray-600 cursor-not-allowed'}`}
                                                 >
                                                     Read
@@ -399,6 +597,7 @@ function SecretsManager({ identity, roles, filterRoleName, setFilterRoleName }) 
                                                         <button 
                                                             onClick={() => handleEdit(key)} 
                                                             disabled={!p.PUT}
+                                                            title="Edit secret"
                                                             className={`text-sm font-semibold transition ${p.PUT ? 'text-yellow-400 hover:text-yellow-300' : 'text-gray-600 cursor-not-allowed'}`}
                                                         >
                                                             Edit
@@ -406,6 +605,7 @@ function SecretsManager({ identity, roles, filterRoleName, setFilterRoleName }) 
                                                         <button 
                                                             onClick={() => handleDelete(key)} 
                                                             disabled={!p.DELETE}
+                                                            title="Delete secret"
                                                             className={`text-sm font-semibold transition ${p.DELETE ? 'text-red-400 hover:text-red-300' : 'text-gray-600 cursor-not-allowed'}`}
                                                         >
                                                             Delete
@@ -422,7 +622,7 @@ function SecretsManager({ identity, roles, filterRoleName, setFilterRoleName }) 
                 </div>
             </div>
 
-            {(readSecret || isAdding || isEditing) && (
+            {(readSecret || isAdding || isEditing || isImporting) && (
                 <div className="bg-gray-800 p-6 rounded-lg border border-blue-900 h-fit shadow-2xl">
                     {(isAdding || isEditing) ? (
                         <form onSubmit={handlePut}>
@@ -446,6 +646,90 @@ function SecretsManager({ identity, roles, filterRoleName, setFilterRoleName }) 
                                 <button type="submit" className="w-full bg-blue-600 hover:bg-blue-500 text-white font-semibold p-2 rounded transition">Save Secret</button>
                             </div>
                         </form>
+                    ) : isImporting ? (
+                        <div className="space-y-4">
+                            <div className="flex justify-between items-start mb-4">
+                                <h3 className="text-lg font-semibold text-blue-400">Import Env Vars</h3>
+                                <button onClick={() => setIsImporting(false)} className="text-gray-500 hover:text-gray-300 text-xl">&times;</button>
+                            </div>
+                            
+                            {!importAnalysis ? (
+                                <React.Fragment>
+                                    <p className="text-sm text-gray-300">
+                                        Paste your environment variables here. The <code>export</code> prefix is optional.
+                                        Keys will be lowercased and underscores will become dots.
+                                    </p>
+                                    <textarea 
+                                        value={importText} 
+                                        onChange={e => setImportText(e.target.value)} 
+                                        className="w-full bg-gray-900 border border-gray-700 rounded p-2 text-white font-mono h-48 text-sm focus:border-blue-500 outline-none whitespace-pre" 
+                                        placeholder="export STRIPE_API_KEY=sk_test_123&#10;DATABASE_URL=postgres://..." 
+                                    />
+                                    <button 
+                                        onClick={handleParseImport} 
+                                        disabled={isImportProcessing}
+                                        className="w-full bg-blue-600 hover:bg-blue-500 disabled:bg-gray-700 disabled:text-gray-500 text-white font-semibold p-2 rounded transition"
+                                    >
+                                        {isImportProcessing ? 'Analyzing...' : 'Parse & Review'}
+                                    </button>
+                                </React.Fragment>
+                            ) : (
+                                <div className="space-y-6">
+                                    <div className="bg-gray-900 border border-gray-700 p-4 rounded text-sm">
+                                        <p className="font-semibold mb-2 text-white">Import Summary:</p>
+                                        <ul className="space-y-1">
+                                            <li className="text-green-400 font-medium">{importAnalysis.new.length} New Secrets</li>
+                                            <li className="text-yellow-400 font-medium">{importAnalysis.overwrite.length} Secrets to Overwrite</li>
+                                            <li className="text-gray-500">{importAnalysis.unchanged.length} Unchanged (Ignored)</li>
+                                        </ul>
+                                    </div>
+
+                                    {importAnalysis.overwrite.length > 0 && (
+                                        <div className="space-y-2">
+                                            <p className="text-sm font-semibold text-yellow-400">Will be overwritten:</p>
+                                            <ul className="max-h-32 overflow-y-auto bg-gray-900 border border-gray-700 rounded p-2 text-xs font-mono space-y-1">
+                                                {importAnalysis.overwrite.map(item => (
+                                                    <li key={item.vaultPath} className="text-gray-300 flex justify-between items-center border-b border-gray-800 last:border-0 pb-1">
+                                                        <span>{item.vaultPath}</span>
+                                                        <span className="text-yellow-500 font-bold ml-2">Value differs</span>
+                                                    </li>
+                                                ))}
+                                            </ul>
+                                        </div>
+                                    )}
+
+                                    {importAnalysis.new.length > 0 && (
+                                        <div className="space-y-2">
+                                            <p className="text-sm font-semibold text-green-400">Will be added:</p>
+                                            <ul className="max-h-32 overflow-y-auto bg-gray-900 border border-gray-700 rounded p-2 text-xs font-mono space-y-1">
+                                                {importAnalysis.new.map(item => (
+                                                    <li key={item.vaultPath} className="text-gray-300">
+                                                        {item.vaultPath} <span className="text-gray-600">({item.envKey})</span>
+                                                    </li>
+                                                ))}
+                                            </ul>
+                                        </div>
+                                    )}
+
+                                    <div className="flex gap-4 pt-2">
+                                        <button 
+                                            onClick={() => setImportAnalysis(null)} 
+                                            disabled={isImportProcessing}
+                                            className="flex-1 bg-gray-700 hover:bg-gray-600 text-white font-semibold p-2 rounded transition"
+                                        >
+                                            Back
+                                        </button>
+                                        <button 
+                                            onClick={handleConfirmImport} 
+                                            disabled={isImportProcessing || (importAnalysis.new.length === 0 && importAnalysis.overwrite.length === 0)}
+                                            className="flex-1 bg-blue-600 hover:bg-blue-500 disabled:bg-gray-700 disabled:text-gray-500 text-white font-semibold p-2 rounded transition"
+                                        >
+                                            {isImportProcessing ? 'Importing...' : 'Confirm & Import'}
+                                        </button>
+                                    </div>
+                                </div>
+                            )}
+                        </div>
                     ) : (
                         <React.Fragment>
                             <div className="flex justify-between items-start mb-4">
@@ -467,26 +751,35 @@ function SecretsManager({ identity, roles, filterRoleName, setFilterRoleName }) 
 
 function RoleManager({ roles, refreshRoles }) {
     const [name, setName] = useState('');
-    const [policies, setPolicies] = useState([{ prefix: '', methods: ['GET', 'LIST'] }]);
+    const [policies, setPolicies] = useState([{ prefix: '', methods: ['GET'] }]);
     const [generatedToken, setGeneratedToken] = useState('');
     const [editingRoleName, setEditingRoleName] = useState(null);
+    const [expiresAt, setExpiresAt] = useState('');
+    const [neverExpire, setNeverExpire] = useState(true);
 
     const handleCreate = async (e) => {
         e.preventDefault();
         const activePolicies = policies.filter(p => p.prefix.trim() !== '');
         if (activePolicies.length === 0) return alert('At least one policy prefix is required');
 
+        let expiryVal = null;
+        if (!neverExpire && expiresAt) {
+            expiryVal = new Date(expiresAt).toISOString();
+        }
+
         if (editingRoleName) {
             const res = await fetch(`${API_BASE}/v1/roles/${editingRoleName}`, {
                 ...fetchConfig,
                 method: 'PUT',
                 headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({ policies: activePolicies })
+                body: JSON.stringify({ policies: activePolicies, expires_at: expiryVal })
             });
             if (res.ok) {
                 setEditingRoleName(null);
                 setName('');
-                setPolicies([{ prefix: '', methods: ['GET', 'LIST'] }]);
+                setPolicies([{ prefix: '', methods: ['GET'] }]);
+                setExpiresAt('');
+                setNeverExpire(true);
                 refreshRoles();
             } else {
                 alert('Failed to update role');
@@ -498,13 +791,15 @@ function RoleManager({ roles, refreshRoles }) {
             ...fetchConfig,
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ name, policies: activePolicies })
+            body: JSON.stringify({ name, policies: activePolicies, expires_at: expiryVal })
         });
         if (res.ok) {
             const data = await res.json();
             setGeneratedToken(data.token);
             setName('');
-            setPolicies([{ prefix: '', methods: ['GET', 'LIST'] }]);
+            setPolicies([{ prefix: '', methods: ['GET'] }]);
+            setExpiresAt('');
+            setNeverExpire(true);
             refreshRoles();
         } else {
             const errorText = await res.text();
@@ -512,7 +807,7 @@ function RoleManager({ roles, refreshRoles }) {
         }
     };
 
-    const addPolicy = () => setPolicies([...policies, { prefix: '', methods: ['GET', 'LIST'] }]);
+    const addPolicy = () => setPolicies([...policies, { prefix: '', methods: ['GET'] }]);
     const removePolicy = (idx) => setPolicies(policies.filter((_, i) => i !== idx));
     const updatePolicy = (idx, field, value) => {
         const next = [...policies];
@@ -542,7 +837,9 @@ function RoleManager({ roles, refreshRoles }) {
             setGeneratedToken(data.token);
             setEditingRoleName(null);
             setName('');
-            setPolicies([{ prefix: '', methods: ['GET', 'LIST'] }]);
+            setPolicies([{ prefix: '', methods: ['GET'] }]);
+            setExpiresAt('');
+            setNeverExpire(true);
             refreshRoles();
         } else {
             alert('Failed to regenerate role token');
@@ -552,8 +849,25 @@ function RoleManager({ roles, refreshRoles }) {
     const handleEdit = (t) => {
         setEditingRoleName(t.name);
         setName(t.name);
-        setPolicies(t.policies.map(p => ({ ...p })));
+        setPolicies(t.policies.map(p => {
+            let methods = [...p.methods];
+            if (methods.includes('*')) {
+                methods = [...new Set([...methods, 'GET', 'LIST', 'PUT', 'DELETE'])];
+                methods = methods.filter(m => m !== '*');
+            }
+            return { ...p, methods };
+        }));
         setGeneratedToken('');
+        if (t.expires_at) {
+            setNeverExpire(false);
+            const d = new Date(t.expires_at);
+            const tzOffset = d.getTimezoneOffset() * 60000;
+            const localISOTime = new Date(d - tzOffset).toISOString().slice(0, 16);
+            setExpiresAt(localISOTime);
+        } else {
+            setNeverExpire(true);
+            setExpiresAt('');
+        }
     };
 
     const handleClone = (t) => {
@@ -561,12 +875,24 @@ function RoleManager({ roles, refreshRoles }) {
         setName(`${t.name}-copy`);
         setPolicies(t.policies.map(p => ({ ...p })));
         setGeneratedToken('');
+        if (t.expires_at) {
+            setNeverExpire(false);
+            const d = new Date(t.expires_at);
+            const tzOffset = d.getTimezoneOffset() * 60000;
+            const localISOTime = new Date(d - tzOffset).toISOString().slice(0, 16);
+            setExpiresAt(localISOTime);
+        } else {
+            setNeverExpire(true);
+            setExpiresAt('');
+        }
     };
 
     const cancelEdit = () => {
         setEditingRoleName(null);
         setName('');
-        setPolicies([{ prefix: '', methods: ['GET', 'LIST'] }]);
+        setPolicies([{ prefix: '', methods: ['GET'] }]);
+        setExpiresAt('');
+        setNeverExpire(true);
     };
 
     return (
@@ -578,7 +904,15 @@ function RoleManager({ roles, refreshRoles }) {
                         {roles.map(t => (
                             <li key={t.name} className="p-4 flex flex-col gap-2 hover:bg-gray-750 transition-colors">
                                 <div className="flex justify-between items-start">
-                                    <div className="font-semibold text-blue-400">{t.name}</div>
+                                    <div className="flex flex-col">
+                                        <div className="font-semibold text-blue-400">{t.name}</div>
+                                        {t.expires_at && (
+                                            <div className="text-[10px] text-gray-500 flex items-center gap-1 mt-0.5">
+                                                <svg className="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z"></path></svg>
+                                                Expires: {new Date(t.expires_at).toLocaleString()}
+                                            </div>
+                                        )}
+                                    </div>
                                     <div className="flex gap-3">
                                         <button onClick={() => handleEdit(t)} className="text-yellow-400 hover:text-yellow-200 text-sm transition-colors">Edit</button>
                                         <button onClick={() => handleClone(t)} className="text-green-400 hover:text-green-300 text-sm transition-colors">Clone</button>
@@ -646,6 +980,28 @@ function RoleManager({ roles, refreshRoles }) {
                             <button type="button" onClick={addPolicy} className="text-blue-400 hover:text-blue-200 text-xs font-semibold transition-colors">+ Add Another Prefix</button>
                         </div>
 
+                        <div className="pt-2">
+                            <label className="block text-xs text-gray-400 mb-2">Token Expiration</label>
+                            <label className="flex items-center gap-2 mb-2 cursor-pointer text-sm">
+                                <input 
+                                    type="checkbox" 
+                                    checked={neverExpire} 
+                                    onChange={(e) => setNeverExpire(e.target.checked)}
+                                    className="w-4 h-4 rounded border-gray-700 bg-gray-900 text-blue-600 focus:ring-blue-500"
+                                />
+                                <span className="text-gray-300">Never expire</span>
+                            </label>
+                            {!neverExpire && (
+                                <input 
+                                    type="datetime-local" 
+                                    value={expiresAt}
+                                    onChange={(e) => setExpiresAt(e.target.value)}
+                                    required={!neverExpire}
+                                    className="w-full bg-gray-900 border border-gray-700 rounded p-2 text-white text-sm focus:border-blue-500 outline-none"
+                                />
+                            )}
+                        </div>
+
                         <button type="submit" className="w-full bg-blue-600 hover:bg-blue-500 text-white px-4 py-3 rounded text-sm font-bold transition mt-4 shadow-lg">
                             {editingRoleName ? 'Save Policy Changes' : 'Generate Role Token'}
                         </button>
@@ -695,3 +1051,146 @@ function RoleManager({ roles, refreshRoles }) {
         </div>
     );
 }
+
+function SystemSettings() {
+    const [settings, setSettings] = useState({
+        backup_target: '',
+        backup_interval_mins: '5',
+        backup_retention_all_days: '1',
+        backup_retention_daily_days: '30'
+    });
+    const [isSaving, setIsSaving] = useState(false);
+    const [isBackingUp, setIsBackingUp] = useState(false);
+
+    useEffect(() => {
+        fetch(`${API_BASE}/v1/system/settings`, fetchConfig)
+            .then(res => res.json())
+            .then(data => {
+                if (data) {
+                    setSettings(prev => ({ ...prev, ...data }));
+                }
+            })
+            .catch(err => console.error("Failed to load settings", err));
+    }, []);
+
+    const handleSave = async (e) => {
+        e.preventDefault();
+        setIsSaving(true);
+        try {
+            const res = await fetch(`${API_BASE}/v1/system/settings`, {
+                ...fetchConfig,
+                method: 'PUT',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify(settings)
+            });
+            if (!res.ok) throw new Error("Failed to save settings");
+            alert("Settings saved successfully.");
+        } catch (err) {
+            alert(err.message);
+        } finally {
+            setIsSaving(false);
+        }
+    };
+
+    const triggerBackup = async () => {
+        setIsBackingUp(true);
+        try {
+            const res = await fetch(`${API_BASE}/v1/system/backup`, { ...fetchConfig, method: 'POST' });
+            if (!res.ok) throw new Error(await res.text());
+            alert("Backup completed successfully.");
+        } catch (err) {
+            alert("Backup failed: " + err.message);
+        } finally {
+            setIsBackingUp(false);
+        }
+    };
+
+    return (
+        <div className="max-w-3xl font-sans">
+            <div className="bg-gray-800 p-8 rounded-lg shadow-xl border border-gray-700 mb-8">
+                <div className="flex justify-between items-center mb-6 border-b border-gray-700 pb-4">
+                    <div>
+                        <h2 className="text-xl font-bold text-white">System Settings</h2>
+                        <p className="text-sm text-gray-400 mt-1">Configure global server parameters</p>
+                    </div>
+                </div>
+
+                <form onSubmit={handleSave} className="space-y-6">
+                    <div className="bg-gray-900/50 p-6 rounded-lg border border-gray-700">
+                        <h3 className="text-lg font-semibold text-gray-200 mb-4 border-b border-gray-700 pb-2">Backup Configuration</h3>
+                        
+                        <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+                            <div className="md:col-span-2">
+                                <label className="block text-sm font-medium text-gray-400 mb-2">Backup Target (Path or SCP)</label>
+                                <input 
+                                    type="text" 
+                                    value={settings.backup_target || ''} 
+                                    onChange={e => setSettings({...settings, backup_target: e.target.value})}
+                                    placeholder="/var/lib/backups/ or user@host:/backups/"
+                                    className="w-full bg-gray-900 border border-gray-600 rounded p-3 text-white placeholder-gray-500 focus:border-blue-500 focus:outline-none" 
+                                />
+                                <p className="text-xs text-gray-500 mt-1">Leave empty to disable backups.</p>
+                            </div>
+
+                            <div>
+                                <label className="block text-sm font-medium text-gray-400 mb-2">Check Interval (Minutes)</label>
+                                <input 
+                                    type="number" min="1"
+                                    value={settings.backup_interval_mins || '5'} 
+                                    onChange={e => setSettings({...settings, backup_interval_mins: e.target.value})}
+                                    className="w-full bg-gray-900 border border-gray-600 rounded p-3 text-white focus:border-blue-500 focus:outline-none" 
+                                />
+                                <p className="text-xs text-gray-500 mt-1">How often the background daemon checks for changes.</p>
+                            </div>
+
+                            <div className="md:col-span-2 mt-2">
+                                <h4 className="text-sm font-medium text-gray-300 mb-3">Retention Policy</h4>
+                                <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                                    <div className="bg-gray-800 p-4 rounded border border-gray-700 flex flex-col justify-center">
+                                        <label className="text-xs text-gray-400 mb-1">Keep ALL backups for (Days):</label>
+                                        <input 
+                                            type="number" min="0"
+                                            value={settings.backup_retention_all_days || '1'} 
+                                            onChange={e => setSettings({...settings, backup_retention_all_days: e.target.value})}
+                                            className="w-full bg-gray-900 border border-gray-600 rounded p-2 text-white focus:border-blue-500 focus:outline-none" 
+                                        />
+                                    </div>
+                                    <div className="bg-gray-800 p-4 rounded border border-gray-700 flex flex-col justify-center">
+                                        <label className="text-xs text-gray-400 mb-1">Keep 1 backup per day for next (Days):</label>
+                                        <input 
+                                            type="number" min="0"
+                                            value={settings.backup_retention_daily_days || '30'} 
+                                            onChange={e => setSettings({...settings, backup_retention_daily_days: e.target.value})}
+                                            className="w-full bg-gray-900 border border-gray-600 rounded p-2 text-white focus:border-blue-500 focus:outline-none" 
+                                        />
+                                    </div>
+                                </div>
+                                <p className="text-xs text-gray-500 mt-2 italic">Backups older than the sum of these two values will be automatically deleted from local directories.</p>
+                            </div>
+                        </div>
+                    </div>
+
+                    <div className="flex gap-4">
+                        <button 
+                            type="submit" 
+                            disabled={isSaving}
+                            className="bg-blue-600 hover:bg-blue-500 text-white px-6 py-3 rounded font-medium shadow transition disabled:opacity-50"
+                        >
+                            {isSaving ? "Saving..." : "Save Settings"}
+                        </button>
+
+                        <button 
+                            type="button"
+                            onClick={triggerBackup}
+                            disabled={isBackingUp || !settings.backup_target}
+                            className="bg-gray-700 hover:bg-gray-600 text-white px-6 py-3 rounded font-medium shadow transition disabled:opacity-50"
+                        >
+                            {isBackingUp ? "Backing up..." : "Run Backup Now"}
+                        </button>
+                    </div>
+                </form>
+            </div>
+        </div>
+    );
+}
+

@@ -8,6 +8,7 @@ import (
 	"encoding/json"
 	"net/http"
 	"strings"
+	"time"
 
 	"tiny-secrets-manager/internal/config"
 	"tiny-secrets-manager/internal/store"
@@ -53,8 +54,9 @@ func (s *Server) handleCreateRole(w http.ResponseWriter, r *http.Request) {
 
 	r.Body = http.MaxBytesReader(w, r.Body, maxPayloadBytes)
 	var req struct {
-		Name     string          `json:"name"`
-		Policies []config.Policy `json:"policies"`
+		Name      string          `json:"name"`
+		Policies  []config.Policy `json:"policies"`
+		ExpiresAt *time.Time      `json:"expires_at"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil || req.Name == "" {
 		http.Error(w, "invalid payload", http.StatusBadRequest)
@@ -63,20 +65,20 @@ func (s *Server) handleCreateRole(w http.ResponseWriter, r *http.Request) {
 
 	policiesJSON, _ := json.Marshal(req.Policies)
 	raw := make([]byte, 32)
-	rand.Read(raw)
+	_, _ = rand.Read(raw)
 	tokenStr := base64.RawURLEncoding.EncodeToString(raw)
 	hash := sha256.Sum256([]byte(tokenStr))
 
 	ctx, cancel := context.WithTimeout(r.Context(), dbTimeout)
 	defer cancel()
 
-	if err := s.store.PutRole(ctx, req.Name, hash[:], policiesJSON, false); err != nil {
+	if err := s.store.PutRole(ctx, req.Name, hash[:], policiesJSON, false, req.ExpiresAt); err != nil {
 		s.logger.Error("db put role error", "err", err)
 		http.Error(w, "internal server error", http.StatusInternalServerError)
 		return
 	}
 
-	go s.triggerBackup()
+	s.flagBackupNeeded()
 	w.Header().Set("Content-Type", "application/json")
 	if err := json.NewEncoder(w).Encode(map[string]string{"token": tokenStr}); err != nil {
 		s.logger.Error("failed to encode token response", "err", err)
@@ -98,7 +100,8 @@ func (s *Server) handleUpdateRole(w http.ResponseWriter, r *http.Request) {
 
 	r.Body = http.MaxBytesReader(w, r.Body, maxPayloadBytes)
 	var req struct {
-		Policies []config.Policy `json:"policies"`
+		Policies  []config.Policy `json:"policies"`
+		ExpiresAt *time.Time      `json:"expires_at"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		http.Error(w, "invalid payload", http.StatusBadRequest)
@@ -109,13 +112,13 @@ func (s *Server) handleUpdateRole(w http.ResponseWriter, r *http.Request) {
 	ctx, cancel := context.WithTimeout(r.Context(), dbTimeout)
 	defer cancel()
 
-	if err := s.store.UpdateRolePolicies(ctx, name, policiesJSON); err != nil {
+	if err := s.store.UpdateRole(ctx, name, policiesJSON, req.ExpiresAt); err != nil {
 		s.logger.Error("db update role error", "err", err)
 		http.Error(w, "internal server error", http.StatusInternalServerError)
 		return
 	}
 
-	go s.triggerBackup()
+	s.flagBackupNeeded()
 	w.WriteHeader(http.StatusNoContent)
 }
 
@@ -135,7 +138,7 @@ func (s *Server) handleDeleteRole(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	go s.triggerBackup()
+	s.flagBackupNeeded()
 	w.WriteHeader(http.StatusNoContent)
 }
 
@@ -153,7 +156,7 @@ func (s *Server) handleRegenerateRoleToken(w http.ResponseWriter, r *http.Reques
 	}
 
 	raw := make([]byte, 32)
-	rand.Read(raw)
+	_, _ = rand.Read(raw)
 	tokenStr := base64.RawURLEncoding.EncodeToString(raw)
 	hash := sha256.Sum256([]byte(tokenStr))
 
@@ -166,7 +169,7 @@ func (s *Server) handleRegenerateRoleToken(w http.ResponseWriter, r *http.Reques
 		return
 	}
 
-	go s.triggerBackup()
+	s.flagBackupNeeded()
 	w.Header().Set("Content-Type", "application/json")
 	if err := json.NewEncoder(w).Encode(map[string]string{"token": tokenStr}); err != nil {
 		s.logger.Error("failed to encode token response", "err", err)
@@ -190,7 +193,7 @@ func (s *Server) handleRegenerateRecoveryKeys(w http.ResponseWriter, r *http.Req
 		return
 	}
 
-	go s.triggerBackup()
+	s.flagBackupNeeded()
 	w.Header().Set("Content-Type", "application/json")
 	if err := json.NewEncoder(w).Encode(map[string][]string{"recovery_keys": keys}); err != nil {
 		s.logger.Error("failed to encode recovery keys", "err", err)

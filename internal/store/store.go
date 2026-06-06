@@ -35,6 +35,7 @@ type RoleRecord struct {
 	IsAdmin   bool            `json:"is_admin"`
 	Policies  json.RawMessage `json:"policies"`
 	CreatedAt time.Time       `json:"created_at"`
+	ExpiresAt *time.Time      `json:"expires_at"`
 }
 
 // New initializes the database, ensures schema integrity, and resolves the
@@ -94,10 +95,18 @@ func initSchema(db *sql.DB) error {
 			password_hash TEXT NOT NULL,
 			created_at TIMESTAMP NOT NULL
 		)`,
+		`ALTER TABLE roles ADD COLUMN expires_at TIMESTAMP`,
+		`CREATE TABLE IF NOT EXISTS settings (
+			key TEXT PRIMARY KEY,
+			value TEXT NOT NULL,
+			updated_at TIMESTAMP NOT NULL
+		)`,
 	}
 	for _, q := range queries {
 		if _, err := db.Exec(q); err != nil {
-			return err
+			if !strings.Contains(err.Error(), "duplicate column name") {
+				return err
+			}
 		}
 	}
 	return nil
@@ -181,13 +190,13 @@ func decryptWithRecoveryKey(db *sql.DB, recoveryKeyB64, masterKeyB64 string) []b
 			dek := decrypted
 
 			// Remove the used recovery key
-			db.Exec("DELETE FROM encryption_slots WHERE slot_name = ?", slotName)
+			_, _ = db.Exec("DELETE FROM encryption_slots WHERE slot_name = ?", slotName)
 
 			// If we have a new master key, re-encrypt the DEK with it immediately
 			if masterKeyB64 != "" {
 				if primaryBox, err := crypto.NewBox(masterKeyB64); err == nil {
 					if n, c, err := primaryBox.Encrypt(dek, []byte("primary")); err == nil {
-						db.Exec("INSERT OR REPLACE INTO encryption_slots (slot_name, nonce, wrapped_dek) VALUES ('primary', ?, ?)", n, c)
+						_, _ = db.Exec("INSERT OR REPLACE INTO encryption_slots (slot_name, nonce, wrapped_dek) VALUES ('primary', ?, ?)", n, c)
 					}
 				}
 			}
@@ -228,13 +237,13 @@ func bootstrapDEK(db *sql.DB, masterKeyB64 string, logger *slog.Logger) ([]byte,
 
 	for i := 0; i < 3; i++ {
 		bk := make([]byte, 32)
-		rand.Read(bk)
+		_, _ = rand.Read(bk)
 		bkB64 := base64.StdEncoding.EncodeToString(bk)
 
 		backupBox, _ := crypto.NewBox(bkB64)
 		slotName := "backup_" + strconv.Itoa(i)
 		bn, bc, _ := backupBox.Encrypt(dek, []byte(slotName))
-		db.Exec("INSERT INTO encryption_slots (slot_name, nonce, wrapped_dek) VALUES (?, ?, ?)", slotName, bn, bc)
+		_, _ = db.Exec("INSERT INTO encryption_slots (slot_name, nonce, wrapped_dek) VALUES (?, ?, ?)", slotName, bn, bc)
 
 		os.Stdout.WriteString("  Recovery Key " + strconv.Itoa(i) + ": " + bkB64 + "\n")
 	}
@@ -250,7 +259,7 @@ func (s *Store) RegenerateRecoveryKeys(ctx context.Context) ([]string, error) {
 	if err != nil {
 		return nil, err
 	}
-	defer tx.Rollback()
+	defer func() { _ = tx.Rollback() }()
 
 	_, err = tx.ExecContext(ctx, "DELETE FROM encryption_slots WHERE slot_name LIKE 'backup_%'")
 	if err != nil {
@@ -260,7 +269,7 @@ func (s *Store) RegenerateRecoveryKeys(ctx context.Context) ([]string, error) {
 	keys := make([]string, 3)
 	for i := 0; i < 3; i++ {
 		rawKey := make([]byte, 32)
-		rand.Read(rawKey)
+		_, _ = rand.Read(rawKey)
 		b64Key := base64.StdEncoding.EncodeToString(rawKey)
 		keys[i] = b64Key
 
@@ -382,18 +391,18 @@ func (s *Store) List(ctx context.Context, global bool, prefixes []string, after 
 }
 
 // PutRole stores a new hashed machine role and its policies.
-func (s *Store) PutRole(ctx context.Context, name string, hash []byte, policiesJSON []byte, isAdmin bool) error {
+func (s *Store) PutRole(ctx context.Context, name string, hash []byte, policiesJSON []byte, isAdmin bool, expiresAt *time.Time) error {
 	adminFlag := 0
 	if isAdmin {
 		adminFlag = 1
 	}
-	_, err := s.db.ExecContext(ctx, "INSERT INTO roles (name, hash, policies_json, is_admin, created_at) VALUES (?, ?, ?, ?, ?)", name, hash, string(policiesJSON), adminFlag, time.Now())
+	_, err := s.db.ExecContext(ctx, "INSERT INTO roles (name, hash, policies_json, is_admin, created_at, expires_at) VALUES (?, ?, ?, ?, ?, ?)", name, hash, string(policiesJSON), adminFlag, time.Now(), expiresAt)
 	return err
 }
 
-// UpdateRolePolicies updates the policy JSON for an existing role name.
-func (s *Store) UpdateRolePolicies(ctx context.Context, name string, policiesJSON []byte) error {
-	_, err := s.db.ExecContext(ctx, "UPDATE roles SET policies_json = ? WHERE name = ?", string(policiesJSON), name)
+// UpdateRole updates the policy JSON and expiration for an existing role name.
+func (s *Store) UpdateRole(ctx context.Context, name string, policiesJSON []byte, expiresAt *time.Time) error {
+	_, err := s.db.ExecContext(ctx, "UPDATE roles SET policies_json = ?, expires_at = ? WHERE name = ?", string(policiesJSON), expiresAt, name)
 	return err
 }
 
@@ -402,12 +411,16 @@ func (s *Store) GetRoleByHash(ctx context.Context, hash []byte) (*RoleRecord, er
 	var tr RoleRecord
 	var p string
 	var isAdmin int
-	err := s.db.QueryRowContext(ctx, "SELECT name, policies_json, is_admin, created_at FROM roles WHERE hash = ?", hash).Scan(&tr.Name, &p, &isAdmin, &tr.CreatedAt)
+	var expiresAt sql.NullTime
+	err := s.db.QueryRowContext(ctx, "SELECT name, policies_json, is_admin, created_at, expires_at FROM roles WHERE hash = ?", hash).Scan(&tr.Name, &p, &isAdmin, &tr.CreatedAt, &expiresAt)
 	if err != nil {
 		return nil, err
 	}
 	tr.Policies = json.RawMessage(p)
 	tr.IsAdmin = isAdmin == 1
+	if expiresAt.Valid {
+		tr.ExpiresAt = &expiresAt.Time
+	}
 	return &tr, nil
 }
 
@@ -416,18 +429,22 @@ func (s *Store) GetRoleByName(ctx context.Context, name string) (*RoleRecord, er
 	var tr RoleRecord
 	var p string
 	var isAdmin int
-	err := s.db.QueryRowContext(ctx, "SELECT name, policies_json, is_admin, created_at FROM roles WHERE name = ?", name).Scan(&tr.Name, &p, &isAdmin, &tr.CreatedAt)
+	var expiresAt sql.NullTime
+	err := s.db.QueryRowContext(ctx, "SELECT name, policies_json, is_admin, created_at, expires_at FROM roles WHERE name = ?", name).Scan(&tr.Name, &p, &isAdmin, &tr.CreatedAt, &expiresAt)
 	if err != nil {
 		return nil, err
 	}
 	tr.Policies = json.RawMessage(p)
 	tr.IsAdmin = isAdmin == 1
+	if expiresAt.Valid {
+		tr.ExpiresAt = &expiresAt.Time
+	}
 	return &tr, nil
 }
 
 // ListRoles returns all registered machine roles, sorted by name.
 func (s *Store) ListRoles(ctx context.Context) ([]RoleRecord, error) {
-	rows, err := s.db.QueryContext(ctx, "SELECT name, policies_json, is_admin, created_at FROM roles ORDER BY name ASC")
+	rows, err := s.db.QueryContext(ctx, "SELECT name, policies_json, is_admin, created_at, expires_at FROM roles ORDER BY name ASC")
 	if err != nil {
 		return nil, err
 	}
@@ -438,14 +455,33 @@ func (s *Store) ListRoles(ctx context.Context) ([]RoleRecord, error) {
 		var tr RoleRecord
 		var p string
 		var isAdmin int
-		if err := rows.Scan(&tr.Name, &p, &isAdmin, &tr.CreatedAt); err != nil {
+		var expiresAt sql.NullTime
+		if err := rows.Scan(&tr.Name, &p, &isAdmin, &tr.CreatedAt, &expiresAt); err != nil {
 			return nil, err
 		}
 		tr.Policies = json.RawMessage(p)
 		tr.IsAdmin = isAdmin == 1
+		if expiresAt.Valid {
+			tr.ExpiresAt = &expiresAt.Time
+		}
 		res = append(res, tr)
 	}
 	return res, nil
+}
+
+// ExtendRoleExpiry updates the expiration time of a role.
+func (s *Store) ExtendRoleExpiry(ctx context.Context, name string, expiresAt time.Time) error {
+	_, err := s.db.ExecContext(ctx, "UPDATE roles SET expires_at = ? WHERE name = ?", expiresAt, name)
+	return err
+}
+
+// DeleteExpiredRoles permanently removes any roles whose expiration date has passed.
+func (s *Store) DeleteExpiredRoles(ctx context.Context) (int64, error) {
+	res, err := s.db.ExecContext(ctx, "DELETE FROM roles WHERE expires_at IS NOT NULL AND expires_at < ?", time.Now())
+	if err != nil {
+		return 0, err
+	}
+	return res.RowsAffected()
 }
 
 // DeleteRole revokes a machine role by name.
@@ -483,4 +519,44 @@ func (s *Store) CountAdmins(ctx context.Context) (int, error) {
 	var count int
 	err := s.db.QueryRowContext(ctx, "SELECT COUNT(*) FROM admins").Scan(&count)
 	return count, err
+}
+
+// PutSetting creates or updates a system setting.
+func (s *Store) PutSetting(ctx context.Context, key, value string) error {
+	_, err := s.db.ExecContext(ctx, `
+		INSERT INTO settings (key, value, updated_at)
+		VALUES (?, ?, ?)
+		ON CONFLICT(key) DO UPDATE SET
+			value=excluded.value, updated_at=excluded.updated_at`,
+		key, value, time.Now())
+	return err
+}
+
+// GetSetting retrieves a system setting by key. Returns empty string if not found.
+func (s *Store) GetSetting(ctx context.Context, key string) (string, error) {
+	var val string
+	err := s.db.QueryRowContext(ctx, "SELECT value FROM settings WHERE key = ?", key).Scan(&val)
+	if err == sql.ErrNoRows {
+		return "", nil
+	}
+	return val, err
+}
+
+// GetAllSettings retrieves all system settings.
+func (s *Store) GetAllSettings(ctx context.Context) (map[string]string, error) {
+	rows, err := s.db.QueryContext(ctx, "SELECT key, value FROM settings")
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	settings := make(map[string]string)
+	for rows.Next() {
+		var k, v string
+		if err := rows.Scan(&k, &v); err != nil {
+			return nil, err
+		}
+		settings[k] = v
+	}
+	return settings, nil
 }

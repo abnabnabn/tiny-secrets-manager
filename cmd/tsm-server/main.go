@@ -23,14 +23,18 @@ import (
 	"golang.org/x/crypto/bcrypt"
 )
 
+var Version = "dev"
+
 func generateRandomString(n int) string {
 	b := make([]byte, n)
-	rand.Read(b)
+	_, _ = rand.Read(b)
 	return base64.RawURLEncoding.EncodeToString(b)
 }
 
-func bootstrap(logger *slog.Logger) (*config.Config, error) {
-	configPath := "config.json"
+func bootstrap(logger *slog.Logger, configPath string) (*config.Config, error) {
+	if configPath == "" {
+		configPath = "config.json"
+	}
 
 	// 1. Check if we have an existing config
 	if _, err := os.Stat(configPath); err == nil {
@@ -41,7 +45,7 @@ func bootstrap(logger *slog.Logger) (*config.Config, error) {
 	logger.Info("no configuration found, initiating self-bootstrap...")
 
 	mKey := make([]byte, 32)
-	rand.Read(mKey)
+	_, _ = rand.Read(mKey)
 
 	cfg := &config.Config{
 		MasterKey: base64.StdEncoding.EncodeToString(mKey),
@@ -82,6 +86,7 @@ func main() {
 	var dbPathFlag string
 	var backupTargetFlag string
 	var recoveryKeyFlag string
+	var seedOnlyFlag bool
 
 	flag.BoolVar(&insecureFlag, "insecure", false, "Disable secure mode")
 	flag.StringVar(&adminUserFlag, "admin-user", "", "Admin username")
@@ -92,6 +97,7 @@ func main() {
 	flag.StringVar(&dbPathFlag, "db-path", "", "Database path")
 	flag.StringVar(&backupTargetFlag, "backup-target", "", "Backup target")
 	flag.StringVar(&recoveryKeyFlag, "recovery-key", "", "Recovery key")
+	flag.BoolVar(&seedOnlyFlag, "seed-only", false, "Seed the database and exit immediately")
 
 	flag.Parse()
 
@@ -102,11 +108,7 @@ func main() {
 	var cfg *config.Config
 	var err error
 
-	if configPath == "" {
-		cfg, err = bootstrap(logger)
-	} else {
-		cfg, err = config.Load(configPath)
-	}
+	cfg, err = bootstrap(logger, configPath)
 
 	if err != nil {
 		logger.Error("failed to load config", "err", err)
@@ -125,9 +127,6 @@ func main() {
 	if dbPathFlag != "" {
 		cfg.DBPath = dbPathFlag
 	}
-	if backupTargetFlag != "" {
-		cfg.BackupTarget = backupTargetFlag
-	}
 
 	recoveryKey := recoveryKeyFlag
 	if recoveryKey == "" {
@@ -144,6 +143,20 @@ func main() {
 	if err := seedAdminUser(context.Background(), db, adminUserFlag, adminPassFlag, adminTokenFlag); err != nil {
 		logger.Error("failed to seed admin user", "err", err)
 		os.Exit(1)
+	}
+
+	if backupTargetFlag == "" {
+		backupTargetFlag = os.Getenv("TSM_BACKUP_TARGET")
+	}
+	if backupTargetFlag != "" {
+		if err := db.PutSetting(context.Background(), "backup_target", backupTargetFlag); err != nil {
+			logger.Error("failed to seed backup target", "err", err)
+		}
+	}
+
+	if seedOnlyFlag {
+		logger.Info("database seeded successfully, exiting due to -seed-only flag")
+		return
 	}
 
 	if err := runServer(cfg, db, logger); err != nil {
@@ -195,9 +208,8 @@ func seedAdminUser(ctx context.Context, db *store.Store, adminUser, adminPass, a
 	}
 
 	tokenHash := sha256.Sum256([]byte(token))
-	policies := []config.Policy{{Prefix: "*", Methods: []string{"*"}}}
-	pJSON, _ := json.Marshal(policies)
-	if err := db.PutRole(ctx, "admin", tokenHash[:], pJSON, true); err != nil {
+	pJSON, _ := json.Marshal([]config.Policy{{Prefix: "*", Methods: []string{"*"}}})
+	if err := db.PutRole(ctx, "admin", tokenHash[:], pJSON, true, nil); err != nil {
 		return fmt.Errorf("failed to create admin role: %w", err)
 	}
 
@@ -216,16 +228,18 @@ func seedAdminUser(ctx context.Context, db *store.Store, adminUser, adminPass, a
 }
 
 func runServer(cfg *config.Config, db *store.Store, logger *slog.Logger) error {
-	fmt.Print(`
-  _____  _____ __  __ 
- |_   _|/ ____|  \/  |
-   | | | (___ | \  / |
-   | |  \___ \| |\/| |
-   | |  ____) | |  | |
-   |_| |_____/|_|  |_|
-  Tiny Secrets Manager
-
-`)
+	logo := `
+  _____ _                 _____                    _       
+ |_   _(_)_ __ _   _     / ____|                  | |      
+   | | | | '_ \ | | |   | (___   ___  ___ _ __ ___| |_ ___ 
+   | | | | | | | |_| |   \___ \ / _ \/ __| '__/ _ \ __/ __|
+   | | |_| | | |\__, |   ____) |  __/ (__| | |  __/ |_\__ \
+   \_/   |_| |_| __/ |  |_____/ \___|\___|_|  \___|\__|___/
+                |___/                                      
+                                        Manager
+`
+	fmt.Println(logo)
+	fmt.Printf("  Version: %s\n", Version)
 
 	if cfg.Insecure {
 		fmt.Println("  ========================================================")
@@ -236,11 +250,19 @@ func runServer(cfg *config.Config, db *store.Store, logger *slog.Logger) error {
 		fmt.Println()
 	}
 
-	srv := api.NewServer(db, cfg, logger)
+	srv := api.NewServer(db, cfg, logger, Version)
 	mux := http.NewServeMux()
 	srv.RegisterRoutes(mux)
-	mux.Handle("/", http.FileServer(http.FS(public.FS)))
 
+	cliDir := os.Getenv("TSM_CLI_DIR")
+	if cliDir == "" {
+		cliDir = "./cli"
+	}
+	if stat, err := os.Stat(cliDir); err == nil && stat.IsDir() {
+		mux.Handle("/cli/", http.StripPrefix("/cli/", http.FileServer(http.Dir(cliDir))))
+	}
+
+	mux.Handle("/", http.FileServer(http.FS(public.FS)))
 	httpServer := &http.Server{
 		Addr:         cfg.Listen,
 		Handler:      http.TimeoutHandler(srv.SecurityMiddleware(mux), 15*time.Second, "request timed out"),
@@ -254,6 +276,26 @@ func runServer(cfg *config.Config, db *store.Store, logger *slog.Logger) error {
 		if err := httpServer.ListenAndServe(); err != nil && err != http.ErrServerClosed {
 			logger.Error("listen error", "err", err)
 			os.Exit(1)
+		}
+	}()
+
+	tickerCtx, tickerCancel := context.WithCancel(context.Background())
+	defer tickerCancel()
+	go func() {
+		ticker := time.NewTicker(1 * time.Hour)
+		defer ticker.Stop()
+		for {
+			select {
+			case <-tickerCtx.Done():
+				return
+			case <-ticker.C:
+				deleted, err := db.DeleteExpiredRoles(tickerCtx)
+				if err != nil {
+					logger.Error("failed to delete expired roles", "err", err)
+				} else if deleted > 0 {
+					logger.Info("cleaned up expired roles", "count", deleted)
+				}
+			}
 		}
 	}()
 

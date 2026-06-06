@@ -4,13 +4,16 @@ services:
     ports:
       - "8090:8090"
     environment:
+      # Core Configuration
+      - TSM_LISTEN=0.0.0.0:8090
+      - TSM_DB_PATH=/data/tsm.db
+      - TSM_BACKUP_TARGET=/backups/
+      # Bootstrapping Credentials
       - TSM_MASTER_KEY=${TSM_MASTER_KEY:-dev-master-key-32-chars-long-!!!}
       - TSM_ADMIN_USER=${TSM_ADMIN_USER:-admin}
       - TSM_ADMIN_PASS=${TSM_ADMIN_PASS:-admin-password}
       - TSM_ADMIN_TOKEN=${TSM_ADMIN_TOKEN} # Leave empty to auto-generate or provide one
     volumes:
       - ./data:/data
+      - ./backups:/backups
     restart: unless-stopped
-
-volumes:
-  data:

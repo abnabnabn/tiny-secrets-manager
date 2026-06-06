@@ -25,8 +25,8 @@ func TestHandleLogin(t *testing.T) {
 		rec := httptest.NewRecorder()
 		mux.ServeHTTP(rec, req)
 
-		assert.Equal(t, http.StatusNoContent, rec.Code)
-		
+		assert.Equal(t, http.StatusOK, rec.Code)
+
 		// Ensure cookie is set
 		cookies := rec.Result().Cookies()
 		require.Len(t, cookies, 1)
@@ -74,7 +74,7 @@ func TestHandleAuthMe(t *testing.T) {
 	mux.ServeHTTP(rec, req)
 
 	assert.Equal(t, http.StatusOK, rec.Code)
-	
+
 	var client Client
 	err := json.NewDecoder(rec.Body).Decode(&client)
 	require.NoError(t, err)

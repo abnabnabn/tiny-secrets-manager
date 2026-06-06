@@ -15,10 +15,12 @@ RUN go mod download
 # Copy source code
 COPY . .
 
-# Build the binary with optimizations and static linking
-# CGO is disabled for the static runtime
+# Run prebuild to generate CLI binaries and web assets
+RUN go run cmd/prebuild/main.go
+
+ARG APP_VERSION=dev
 RUN CGO_ENABLED=0 GOOS=${TARGETOS} GOARCH=${TARGETARCH} go build \
-    -ldflags="-s -w" \
+    -ldflags="-s -w -X main.Version=${APP_VERSION}" \
     -o tiny-secrets-manager \
     ./cmd/tsm-server/main.go
 
@@ -30,10 +32,13 @@ WORKDIR /app
 
 # Copy binary from builder
 COPY --from=builder /app/tiny-secrets-manager .
+# Copy CLI binaries from builder
+COPY --from=builder /app/bin/cli /app/cli
 
 # Default configuration environment variables
 ENV TSM_LISTEN=0.0.0.0:8090
 ENV TSM_DB_PATH=/data/tsm.db
+ENV TSM_CLI_DIR=/app/cli
 
 # Expose the service port
 EXPOSE 8090

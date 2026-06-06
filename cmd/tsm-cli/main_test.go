@@ -67,7 +67,7 @@ func TestTSMCLI_ContextLinking(t *testing.T) {
 	require.NoError(t, err)
 
 	// Verify mapping
-	cfg, token, err := app.loadConfig()
+	cfg, token, err := app.loadConfig(true, "")
 	require.NoError(t, err)
 	assert.Equal(t, "test-token", token)
 	assert.Equal(t, "test-token", cfg.Contexts[wd])
@@ -87,7 +87,7 @@ func TestTSMCLI_Subcommands(t *testing.T) {
 			args: []string{"tsm", "get", "my.key"},
 			setupServer: func(w http.ResponseWriter, r *http.Request) {
 				assert.Equal(t, "/v1/secrets/my.key", r.URL.Path)
-				json.NewEncoder(w).Encode(map[string]string{"value": "val123"})
+				_ = json.NewEncoder(w).Encode(map[string]string{"value": "val123"})
 			},
 			expectOut: "val123",
 		},
@@ -102,7 +102,7 @@ func TestTSMCLI_Subcommands(t *testing.T) {
 			setupServer: func(w http.ResponseWriter, r *http.Request) {
 				assert.Equal(t, http.MethodPut, r.Method)
 				var body map[string]string
-				json.NewDecoder(r.Body).Decode(&body)
+				_ = json.NewDecoder(r.Body).Decode(&body)
 				assert.Equal(t, "new.val", body["value"])
 				w.WriteHeader(http.StatusNoContent)
 			},
@@ -111,14 +111,14 @@ func TestTSMCLI_Subcommands(t *testing.T) {
 		{
 			name:        "put - missing args",
 			args:        []string{"tsm", "put", "key"},
-			expectError: "usage: tsm put <key> <value>",
+			expectError: "usage: tsm put <key> <value> [env_key]",
 		},
 		{
 			name: "ls - success",
 			args: []string{"tsm", "ls", "app."},
 			setupServer: func(w http.ResponseWriter, r *http.Request) {
 				assert.Equal(t, "app.", r.URL.Query().Get("prefix"))
-				json.NewEncoder(w).Encode([]string{"app.db", "app.api"})
+				_ = json.NewEncoder(w).Encode([]string{"app.db", "app.api"})
 			},
 			expectOut: "app.db\napp.api\n",
 		},
@@ -131,6 +131,154 @@ func TestTSMCLI_Subcommands(t *testing.T) {
 				w.WriteHeader(http.StatusNoContent)
 			},
 			expectOut: "Secret 'old.key' deleted.",
+		},
+		{
+			name: "role ls - success",
+			args: []string{"tsm", "role", "ls"},
+			setupServer: func(w http.ResponseWriter, r *http.Request) {
+				assert.Equal(t, "/v1/roles", r.URL.Path)
+				assert.Equal(t, http.MethodGet, r.Method)
+				_ = json.NewEncoder(w).Encode([]map[string]interface{}{
+					{
+						"name": "test-role",
+						"policies": []map[string]interface{}{
+							{"prefix": "app.*", "methods": []string{"GET"}},
+						},
+					},
+				})
+			},
+			expectOut: "Role: test-role",
+		},
+		{
+			name: "role rm - success",
+			args: []string{"tsm", "role", "rm", "test-role"},
+			setupServer: func(w http.ResponseWriter, r *http.Request) {
+				assert.Equal(t, "/v1/roles/test-role", r.URL.Path)
+				assert.Equal(t, http.MethodDelete, r.Method)
+				w.WriteHeader(http.StatusNoContent)
+			},
+			expectOut: "Role 'test-role' deleted.",
+		},
+		{
+			name: "role create - success",
+			args: []string{"tsm", "role", "create", "new-role", "--policy", "dev.*:GET"},
+			setupServer: func(w http.ResponseWriter, r *http.Request) {
+				assert.Equal(t, "/v1/roles", r.URL.Path)
+				assert.Equal(t, http.MethodPost, r.Method)
+
+				var body map[string]interface{}
+				_ = json.NewDecoder(r.Body).Decode(&body)
+				assert.Equal(t, "new-role", body["name"])
+
+				policies := body["policies"].([]interface{})
+				p := policies[0].(map[string]interface{})
+				assert.Equal(t, "dev.*", p["prefix"])
+				methods := p["methods"].([]interface{})
+				assert.Equal(t, "GET", methods[0])
+				assert.Len(t, methods, 1)
+
+				_ = json.NewEncoder(w).Encode(map[string]string{"token": "new-token-123"})
+			},
+			expectOut: "Provisioned Token: new-token-123",
+		},
+		{
+			name: "role update - success",
+			args: []string{"tsm", "role", "update", "new-role", "--policy", "dev.*", "--policy", "sys.*:GET"},
+			setupServer: func(w http.ResponseWriter, r *http.Request) {
+				assert.Equal(t, "/v1/roles/new-role", r.URL.Path)
+				assert.Equal(t, http.MethodPut, r.Method)
+
+				var body map[string]interface{}
+				_ = json.NewDecoder(r.Body).Decode(&body)
+				assert.Nil(t, body["name"]) // Name should not be in update payload
+
+				policies := body["policies"].([]interface{})
+				assert.Len(t, policies, 2)
+
+				p1 := policies[0].(map[string]interface{})
+				assert.Equal(t, "dev.*", p1["prefix"])
+				m1 := p1["methods"].([]interface{})
+				assert.Len(t, m1, 1) // Default method check
+
+				p2 := policies[1].(map[string]interface{})
+				assert.Equal(t, "sys.*", p2["prefix"])
+				m2 := p2["methods"].([]interface{})
+				assert.Equal(t, "GET", m2[0])
+
+				w.WriteHeader(http.StatusOK)
+			},
+			expectOut: "Role 'new-role' updated successfully.",
+		},
+		{
+			name: "role export - stdout",
+			args: []string{"tsm", "role", "export"},
+			setupServer: func(w http.ResponseWriter, r *http.Request) {
+				assert.Equal(t, "/v1/roles", r.URL.Path)
+				assert.Equal(t, http.MethodGet, r.Method)
+				_ = json.NewEncoder(w).Encode([]map[string]interface{}{
+					{"name": "r1", "policies": []interface{}{}},
+				})
+			},
+			expectOut: `"name": "r1"`,
+		},
+		{
+			name:        "role create - missing args",
+			args:        []string{"tsm", "role", "create", "my-role"},
+			expectError: "at least one --policy is required",
+		},
+		{
+			name:        "role rm - missing args",
+			args:        []string{"tsm", "role", "rm"},
+			expectError: "usage: tsm role rm <name>",
+		},
+		{
+			name:        "role unknown command",
+			args:        []string{"tsm", "role", "magic"},
+			expectError: "unknown role command: magic",
+		},
+		{
+			name:        "role import missing file",
+			args:        []string{"tsm", "role", "import"},
+			expectError: "usage: tsm role import <file.json>",
+		},
+		{
+			name: "backup trigger - success",
+			args: []string{"tsm", "backup", "trigger"},
+			setupServer: func(w http.ResponseWriter, r *http.Request) {
+				assert.Equal(t, "/v1/system/backup", r.URL.Path)
+				assert.Equal(t, http.MethodPost, r.Method)
+				w.WriteHeader(http.StatusOK)
+			},
+			expectOut: "Backup completed successfully.",
+		},
+		{
+			name: "backup info - success",
+			args: []string{"tsm", "backup", "info"},
+			setupServer: func(w http.ResponseWriter, r *http.Request) {
+				assert.Equal(t, "/v1/system/settings", r.URL.Path)
+				assert.Equal(t, http.MethodGet, r.Method)
+				_ = json.NewEncoder(w).Encode(map[string]string{
+					"backup_target":               "/tmp",
+					"backup_interval_mins":        "60",
+					"backup_retention_all_days":   "7",
+					"backup_retention_daily_days": "30",
+				})
+			},
+			expectOut: "Target: /tmp",
+		},
+		{
+			name: "backup config - success",
+			args: []string{"tsm", "backup", "config", "--target", "/opt/backup", "--interval", "120"},
+			setupServer: func(w http.ResponseWriter, r *http.Request) {
+				assert.Equal(t, "/v1/system/settings", r.URL.Path)
+				assert.Equal(t, http.MethodPut, r.Method)
+				var body map[string]string
+				_ = json.NewDecoder(r.Body).Decode(&body)
+				assert.Equal(t, "/opt/backup", body["backup_target"])
+				assert.Equal(t, "120", body["backup_interval_mins"])
+				w.WriteHeader(http.StatusOK)
+			},
+			expectOut: "Backup settings updated successfully.",
 		},
 		{
 			name: "api error - 401 unauthorized",
@@ -161,7 +309,7 @@ func TestTSMCLI_Subcommands(t *testing.T) {
 			args: []string{"tsm", "ls"},
 			setupServer: func(w http.ResponseWriter, r *http.Request) {
 				w.WriteHeader(http.StatusInternalServerError)
-				w.Write([]byte("something went wrong"))
+				_, _ = w.Write([]byte("something went wrong"))
 			},
 			expectError: "server error (500): something went wrong",
 		},
@@ -185,8 +333,13 @@ func TestTSMCLI_Subcommands(t *testing.T) {
 			}
 
 			// Pre-configure
-			require.NoError(t, app.saveLogin(server.URL))
+			require.NoError(t, app.saveLogin(server.URL, ""))
 			require.NoError(t, app.saveContext("test-token"))
+
+			// Setup admin token directly
+			cfg, _ := app.loadConfigSilent()
+			cfg.AdminToken = "admin-test-token"
+			_ = app.writeConfig(cfg)
 			out.Reset()
 
 			err := app.Run(tt.args)
@@ -287,9 +440,9 @@ func TestTSMCLI_Run_Process_Precedence(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
 		if strings.HasSuffix(r.URL.Path, "vault.secret") {
-			json.NewEncoder(w).Encode(map[string]string{"value": "from-vault"})
+			_ = json.NewEncoder(w).Encode(map[string]string{"value": "from-vault"})
 		} else if strings.HasSuffix(r.URL.Path, "overlap.secret") {
-			json.NewEncoder(w).Encode(map[string]string{"value": "vault-loser"})
+			_ = json.NewEncoder(w).Encode(map[string]string{"value": "vault-loser"})
 		}
 	}))
 	defer server.Close()
@@ -303,14 +456,12 @@ func TestTSMCLI_Run_Process_Precedence(t *testing.T) {
 	}
 
 	// Setup Config
-	require.NoError(t, app.saveLogin(server.URL))
+	require.NoError(t, app.saveLogin(server.URL, ""))
 	require.NoError(t, app.saveContext("token"))
 
 	// Create tsm.env (Mappings)
-	os.WriteFile(filepath.Join(tmpDir, "tsm.env"), []byte("V_VAR=vault.secret\nOVERLAP=overlap.secret"), 0644)
-
-	// Create .env (Literals)
-	os.WriteFile(filepath.Join(tmpDir, ".env"), []byte("E_VAR=from-env-file\nOVERLAP=env-file-wins"), 0644)
+	_ = os.WriteFile(filepath.Join(tmpDir, "tsm.env"), []byte("V_VAR=vault.secret\nOVERLAP=overlap.secret"), 0644)
+	_ = os.WriteFile(filepath.Join(tmpDir, ".env"), []byte("E_VAR=from-env-file\nOVERLAP=env-file-wins"), 0644)
 
 	// We use t.Setenv to simulate Shell variables
 	t.Setenv("S_VAR", "from-shell")
@@ -352,7 +503,7 @@ func TestTSMCLI_Run_ArgumentParsing(t *testing.T) {
 
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
-		json.NewEncoder(w).Encode(map[string]string{"value": "v"})
+		_ = json.NewEncoder(w).Encode(map[string]string{"value": "v"})
 	}))
 	defer server.Close()
 
@@ -363,8 +514,8 @@ func TestTSMCLI_Run_ArgumentParsing(t *testing.T) {
 		HTTPClient: server.Client(),
 		WorkingDir: tmpDir,
 	}
-	app.saveLogin(server.URL)
-	app.saveContext("token")
+	_ = app.saveLogin(server.URL, "")
+	_ = app.saveContext("token")
 
 	// 1. Test custom mapping file flag (-f)
 	err := app.Run(append([]string{"tsm", "run", "-f", "nonexistent.tsm", "--"}, trueCmd...))
@@ -422,7 +573,7 @@ func TestTSMCLI_RunWithEnvironment_EdgeCases(t *testing.T) {
 
 	// Create a dummy env file with comments
 	envPath := filepath.Join(tmpDir, "test.env")
-	os.WriteFile(envPath, []byte("# ignore\nMY_VAR=val\n"), 0644)
+	_ = os.WriteFile(envPath, []byte("# ignore\nMY_VAR=val\n"), 0644)
 
 	app := &TSMCLI{
 		Out: ioDiscard(),
@@ -451,4 +602,109 @@ func TestMaskToken(t *testing.T) {
 
 func ioDiscard() *bytes.Buffer {
 	return &bytes.Buffer{}
+}
+
+func TestTSMCLI_RoleImportExport(t *testing.T) {
+	tmpDir := t.TempDir()
+	configPath := filepath.Join(tmpDir, ".tsm.json")
+
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/v1/roles" {
+			if r.Method == http.MethodGet {
+				_ = json.NewEncoder(w).Encode([]map[string]interface{}{
+					{"name": "r1", "policies": []interface{}{}},
+				})
+				return
+			}
+			if r.Method == http.MethodPost {
+				_ = json.NewEncoder(w).Encode(map[string]string{"token": "new-tok"})
+				return
+			}
+		}
+		if r.Method == http.MethodPut && strings.HasPrefix(r.URL.Path, "/v1/roles/") {
+			w.WriteHeader(http.StatusOK)
+			return
+		}
+		t.Fatalf("unexpected request: %s %s", r.Method, r.URL.Path)
+	}))
+	defer server.Close()
+
+	var out, errBuf bytes.Buffer
+	app := &TSMCLI{
+		Out:        &out,
+		Err:        &errBuf,
+		ConfigPath: configPath,
+		HTTPClient: server.Client(),
+		WorkingDir: tmpDir,
+	}
+	_ = app.saveLogin(server.URL, "")
+	_ = app.saveContext("token")
+
+	cfg, _ := app.loadConfigSilent()
+	cfg.AdminToken = "admin-tok"
+	_ = app.writeConfig(cfg)
+	out.Reset()
+
+	// Test Export to File
+	exportFile := filepath.Join(tmpDir, "export.json")
+	err := app.Run([]string{"tsm", "role", "export", exportFile})
+	require.NoError(t, err)
+	assert.Contains(t, out.String(), "Exported 1 roles")
+
+	// Read Exported File
+	b, err := os.ReadFile(exportFile)
+	require.NoError(t, err)
+	assert.Contains(t, string(b), `"name": "r1"`)
+
+	// Test Import (r1 exists -> updates, r2 new -> creates)
+	importData := `[
+		{"name": "r1", "policies": [{"prefix": "a.*", "methods": ["GET"]}]},
+		{"name": "r2", "policies": [{"prefix": "b.*", "methods": ["PUT"]}]}
+	]`
+	importFile := filepath.Join(tmpDir, "import.json")
+	_ = os.WriteFile(importFile, []byte(importData), 0644)
+
+	out.Reset()
+	err = app.Run([]string{"tsm", "role", "import", importFile})
+	require.NoError(t, err)
+	assert.Contains(t, out.String(), "Import complete: 1 created, 1 updated.")
+}
+
+func TestTSMCLI_AdminMode(t *testing.T) {
+	tmpDir := t.TempDir()
+	configPath := filepath.Join(tmpDir, ".tsm.json")
+
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		assert.Equal(t, "Bearer admin-token-123", r.Header.Get("Authorization"))
+		_ = json.NewEncoder(w).Encode(map[string]string{"key": "value"})
+	}))
+	defer server.Close()
+
+	var out bytes.Buffer
+	app := &TSMCLI{
+		Out:        &out,
+		Err:        &out,
+		ConfigPath: configPath,
+		HTTPClient: server.Client(),
+		WorkingDir: tmpDir,
+	}
+
+	_ = app.saveLogin(server.URL, "")
+
+	// Set admin token but DO NOT link the working directory
+	cfg, _ := app.loadConfigSilent()
+	cfg.AdminToken = "admin-token-123"
+	_ = app.writeConfig(cfg)
+
+	// Normal mode should fail (no directory context)
+	err := app.Run([]string{"tsm", "get", "some.key"})
+	assert.ErrorContains(t, err, "no token linked to this directory")
+
+	// Admin mode should succeed (uses AdminToken)
+	err = app.Run([]string{"tsm", "--admin", "get", "some.key"})
+	assert.NoError(t, err)
+
+	// Admin flag can be placed after
+	err = app.Run([]string{"tsm", "get", "some.key", "--admin"})
+	assert.NoError(t, err)
 }

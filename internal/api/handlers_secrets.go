@@ -78,7 +78,7 @@ func (s *Server) handlePutSecret(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	go s.triggerBackup()
+	s.flagBackupNeeded()
 	w.WriteHeader(http.StatusNoContent)
 }
 
@@ -99,7 +99,7 @@ func (s *Server) handleDeleteSecret(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	go s.triggerBackup()
+	s.flagBackupNeeded()
 	w.WriteHeader(http.StatusNoContent)
 }
 

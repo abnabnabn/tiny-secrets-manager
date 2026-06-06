@@ -44,12 +44,38 @@ class LookupModule(LookupBase):
 
     def run(self, terms, variables=None, **kwargs):
         api_url = os.environ.get('TSM_URL')
-        if not api_url:
-            raise AnsibleError("TSM_URL environment variable is required.")
-        
         token = os.environ.get('TSM_TOKEN')
+
+        if not api_url or not token:
+            config_path = os.path.expanduser('~/.tsm.json')
+            if os.path.exists(config_path):
+                try:
+                    with open(config_path, 'r') as f:
+                        config = json.load(f)
+                    
+                    if not api_url:
+                        api_url = config.get('url')
+                    
+                    if not token:
+                        cwd = os.getcwd()
+                        contexts = config.get('contexts', {})
+                        best_match = ""
+                        best_token = None
+                        
+                        for dir_path, ctx_token in contexts.items():
+                            if cwd == dir_path or cwd.startswith(dir_path + os.sep):
+                                if len(dir_path) > len(best_match):
+                                    best_match = dir_path
+                                    best_token = ctx_token
+                        
+                        token = best_token
+                except Exception:
+                    pass
+
+        if not api_url:
+            raise AnsibleError("TSM_URL environment variable is required, or must be configured in ~/.tsm.json")
         if not token:
-            raise AnsibleError("TSM_TOKEN environment variable is required.")
+            raise AnsibleError("TSM_TOKEN environment variable is required, or a context must be linked via `tsm auth --link`")
 
         # Ensure no trailing slash
         api_url = api_url.rstrip('/')

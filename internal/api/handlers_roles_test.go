@@ -34,7 +34,7 @@ func TestHandleRoleLifecycle(t *testing.T) {
 		mux.ServeHTTP(rec, req)
 
 		assert.Equal(t, http.StatusOK, rec.Code)
-		
+
 		var resp map[string]string
 		err := json.NewDecoder(rec.Body).Decode(&resp)
 		require.NoError(t, err)
@@ -49,11 +49,11 @@ func TestHandleRoleLifecycle(t *testing.T) {
 		mux.ServeHTTP(rec, req)
 
 		assert.Equal(t, http.StatusOK, rec.Code)
-		
+
 		var tokens []store.RoleRecord
 		err := json.NewDecoder(rec.Body).Decode(&tokens)
 		require.NoError(t, err)
-		
+
 		// admin and test-machine (admin is filtered out though)
 		require.Len(t, tokens, 1)
 		assert.Equal(t, "test-machine", tokens[0].Name)

@@ -9,9 +9,9 @@ import (
 	"encoding/json"
 	"log/slog"
 	"net/http"
-	"os"
-	"os/exec"
 	"strings"
+	"sync"
+	"sync/atomic"
 	"time"
 
 	"tiny-secrets-manager/internal/config"
@@ -66,18 +66,24 @@ func (c Client) Can(method, path string) bool {
 
 // Server holds the application state and dependencies for the API handlers.
 type Server struct {
-	store  *store.Store
-	cfg    *config.Config
-	logger *slog.Logger
+	store        *store.Store
+	cfg          *config.Config
+	logger       *slog.Logger
+	version      string
+	backupNeeded atomic.Bool
+	backupMutex  sync.Mutex
 }
 
 // NewServer initializes a new API server instance.
-func NewServer(s *store.Store, cfg *config.Config, logger *slog.Logger) *Server {
-	return &Server{
-		store:  s,
-		cfg:    cfg,
-		logger: logger,
+func NewServer(s *store.Store, cfg *config.Config, logger *slog.Logger, version string) *Server {
+	srv := &Server{
+		store:   s,
+		cfg:     cfg,
+		logger:  logger,
+		version: version,
 	}
+	go srv.backupLoop()
+	return srv
 }
 
 // RegisterRoutes maps the secrets manager's API endpoints to their respective handlers.
@@ -95,6 +101,10 @@ func (s *Server) RegisterRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("DELETE /v1/roles/{name}", s.auth(s.handleDeleteRole))
 	mux.HandleFunc("POST /v1/roles/{name}/regenerate", s.auth(s.handleRegenerateRoleToken))
 	mux.HandleFunc("POST /v1/recovery-keys/regenerate", s.auth(s.handleRegenerateRecoveryKeys))
+
+	mux.HandleFunc("GET /v1/system/settings", s.auth(s.handleGetSettings))
+	mux.HandleFunc("PUT /v1/system/settings", s.auth(s.handlePutSettings))
+	mux.HandleFunc("POST /v1/system/backup", s.auth(s.handleTriggerBackup))
 }
 
 func (s *Server) getSameSiteMode() http.SameSite {
@@ -108,6 +118,7 @@ func (s *Server) getSameSiteMode() http.SameSite {
 // when running in secure mode (i.e. config.Insecure is false).
 func (s *Server) SecurityMiddleware(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("X-TSM-Version", s.version)
 		if !s.cfg.Insecure {
 			isHTTPS := r.TLS != nil || r.Header.Get("X-Forwarded-Proto") == "https"
 			if !isHTTPS {
@@ -163,12 +174,21 @@ func (s *Server) auth(next http.HandlerFunc) http.HandlerFunc {
 			return
 		}
 
+		if tr.ExpiresAt != nil && time.Now().After(*tr.ExpiresAt) {
+			http.Error(w, "unauthorized", http.StatusUnauthorized)
+			return
+		}
+
+		if strings.HasPrefix(tr.Name, "session_") {
+			go func() { _ = s.store.ExtendRoleExpiry(context.Background(), tr.Name, time.Now().Add(1*time.Hour)) }()
+		}
+
 		client.Name = tr.Name
 		client.IsAdmin = tr.IsAdmin
 		if client.IsAdmin {
 			client.Policies = []config.Policy{{Prefix: "*", Methods: []string{"*"}}}
 		} else {
-			json.Unmarshal(tr.Policies, &client.Policies)
+			_ = json.Unmarshal(tr.Policies, &client.Policies)
 		}
 
 		if client.IsAdmin {
@@ -177,7 +197,7 @@ func (s *Server) auth(next http.HandlerFunc) http.HandlerFunc {
 				if err == nil {
 					client.IsAdmin = false
 					client.Name = tr.Name
-					json.Unmarshal(tr.Policies, &client.Policies)
+					_ = json.Unmarshal(tr.Policies, &client.Policies)
 				} else if err != sql.ErrNoRows {
 					s.logger.Error("token lookup for impersonation failed", "err", err)
 					http.Error(w, "internal server error", http.StatusInternalServerError)
@@ -188,51 +208,4 @@ func (s *Server) auth(next http.HandlerFunc) http.HandlerFunc {
 
 		next(w, r.WithContext(context.WithValue(r.Context(), clientCtxKey, client)))
 	}
-}
-
-// triggerBackup creates a consistent database snapshot and transfers it
-// to the configured target (local filesystem or remote scp).
-func (s *Server) triggerBackup() {
-	if s.cfg.BackupTarget == "" {
-		return
-	}
-
-	ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
-	defer cancel()
-
-	// Determine if target is remote (contains ':') or local
-	isRemote := strings.Contains(s.cfg.BackupTarget, ":")
-
-	if !isRemote {
-		// Local backup: VACUUM INTO directly to the target
-		// We use a temporary file and rename to ensure atomicity for the final file
-		tmpFile := s.cfg.BackupTarget + ".tmp"
-		if err := s.store.Backup(ctx, tmpFile); err != nil {
-			s.logger.Error("local backup vacuum failed", "err", err)
-			return
-		}
-		if err := os.Rename(tmpFile, s.cfg.BackupTarget); err != nil {
-			s.logger.Error("local backup rename failed", "err", err)
-			return
-		}
-		s.logger.Info("local database backup successful", "path", s.cfg.BackupTarget)
-		return
-	}
-
-	// Remote backup (scp)
-	tmpFile := s.cfg.DBPath + ".backup.tmp"
-	defer os.Remove(tmpFile)
-
-	if err := s.store.Backup(ctx, tmpFile); err != nil {
-		s.logger.Error("remote backup vacuum failed", "err", err)
-		return
-	}
-
-	cmd := exec.CommandContext(ctx, "scp", "-o", "StrictHostKeyChecking=no", tmpFile, s.cfg.BackupTarget)
-	if out, err := cmd.CombinedOutput(); err != nil {
-		s.logger.Error("scp backup failed", "err", err, "output", string(out))
-		return
-	}
-
-	s.logger.Info("remote database backup successful", "target", s.cfg.BackupTarget)
 }

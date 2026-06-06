@@ -19,6 +19,7 @@ vendor/
 *.test
 *.out
 coverage.txt
+coverage
 
 # IDEs
 .vscode/

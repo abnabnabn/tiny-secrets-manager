@@ -20,7 +20,7 @@ func TestHandlePutAndGetSecret(t *testing.T) {
 	t.Run("put_secret", func(t *testing.T) {
 		body := map[string]string{"value": "my-super-secret-value", "env_key": "MY_ENV_KEY"}
 		b, _ := json.Marshal(body)
-		
+
 		req := httptest.NewRequest("PUT", "/v1/secrets/test.key", bytes.NewBuffer(b))
 		req.Header.Set("Authorization", "Bearer "+adminToken)
 		rec := httptest.NewRecorder()
@@ -37,7 +37,7 @@ func TestHandlePutAndGetSecret(t *testing.T) {
 		mux.ServeHTTP(rec, req)
 
 		assert.Equal(t, http.StatusOK, rec.Code)
-		
+
 		var resp map[string]string
 		err := json.NewDecoder(rec.Body).Decode(&resp)
 		require.NoError(t, err)
