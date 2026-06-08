@@ -18,6 +18,9 @@ COPY . .
 # Run prebuild to generate CLI binaries and web assets
 RUN go run cmd/prebuild/main.go
 
+# Create empty directories for volumes so we can copy them with correct permissions
+RUN mkdir -p /app/data /app/backups
+
 ARG APP_VERSION=dev
 RUN CGO_ENABLED=0 GOOS=${TARGETOS} GOARCH=${TARGETARCH} go build \
     -ldflags="-s -w -X main.Version=${APP_VERSION}" \
@@ -34,6 +37,10 @@ WORKDIR /app
 COPY --from=builder /app/tiny-secrets-manager .
 # Copy CLI binaries from builder
 COPY --from=builder /app/bin/cli /app/cli
+
+# Create mount points with correct nonroot ownership
+COPY --chown=nonroot:nonroot --from=builder /app/data /data
+COPY --chown=nonroot:nonroot --from=builder /app/backups /backups
 
 # Default configuration environment variables
 ENV TSM_LISTEN=0.0.0.0:8090
