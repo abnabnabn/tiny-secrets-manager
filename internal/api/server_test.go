@@ -156,6 +156,8 @@ func TestClient_Can(t *testing.T) {
 	assert.True(t, client.Can("GET", "shared"))
 	assert.True(t, client.Can("PUT", "shared.foo"))
 	assert.True(t, client.Can("DELETE", "shared.bar"))
+	assert.True(t, client.Can("GET", "shared.foo.bar"))      // Multi-level sub-segment test
+	assert.True(t, client.Can("GET", "shared.foo.bar.baz"))  // Multi-level sub-segment test
 	assert.False(t, client.Can("GET", "shared_foo"))
 
 	// Global wildcard policy test

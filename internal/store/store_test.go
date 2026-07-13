@@ -74,10 +74,18 @@ func TestStore_Secrets(t *testing.T) {
 	_, err = st.Get(ctx, "non.existent")
 	assert.ErrorIs(t, err, sql.ErrNoRows)
 
+	err = st.Put(ctx, "app.db.pass.extra.level", []byte("extra"))
+	require.NoError(t, err)
+
 	// 3. List
 	keys, err := st.List(ctx, false, []string{"app.db.*"}, "", 100)
 	require.NoError(t, err)
-	assert.ElementsMatch(t, []string{"app.db.pass", "app.db.user"}, keys)
+	assert.ElementsMatch(t, []string{"app.db.pass", "app.db.user", "app.db.pass.extra.level"}, keys)
+
+	// List with non-wildcard segment-aware prefix "app.db"
+	keys2, err := st.List(ctx, false, []string{"app.db"}, "", 100)
+	require.NoError(t, err)
+	assert.ElementsMatch(t, []string{"app.db.pass", "app.db.user", "app.db.pass.extra.level"}, keys2)
 
 	// 4. Update
 	err = st.Put(ctx, "app.db.pass", []byte("newpass"))
@@ -87,6 +95,8 @@ func TestStore_Secrets(t *testing.T) {
 
 	// 5. Delete
 	err = st.Delete(ctx, "app.db.user")
+	require.NoError(t, err)
+	err = st.Delete(ctx, "app.db.pass.extra.level")
 	require.NoError(t, err)
 
 	keys, _ = st.List(ctx, true, nil, "", 100)
