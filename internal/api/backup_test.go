@@ -3,6 +3,7 @@ package api
 import (
 	"context"
 	"os"
+	"strings"
 	"testing"
 )
 
@@ -53,4 +54,24 @@ func TestRetentionPolicy(t *testing.T) {
 
 	// Now put an invalid target
 	srv.applyRetentionPolicy("/invalid/dir/that/does/not/exist", false)
+}
+
+
+func TestRunBackup_InvalidTargetDash(t *testing.T) {
+	srv, _, _, _ := setupTestServer(t)
+
+	// Test starting with a dash (e.g. parameter/option injection attempt)
+	err := srv.store.PutSetting(context.Background(), "backup_target", "-oProxyCommand=touch_pwned")
+	if err != nil {
+		t.Fatalf("failed to put setting: %v", err)
+	}
+
+	err = srv.runBackup()
+	if err == nil {
+		t.Fatalf("expected runBackup to fail for target starting with a dash, but got no error")
+	}
+
+	if !strings.Contains(err.Error(), "target cannot start with a dash") {
+		t.Errorf("expected error message about target starting with a dash, got: %v", err)
+	}
 }
