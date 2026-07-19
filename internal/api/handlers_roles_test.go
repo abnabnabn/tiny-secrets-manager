@@ -8,6 +8,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"testing"
+	"time"
 
 	"tiny-secrets-manager/internal/config"
 	"tiny-secrets-manager/internal/store"
@@ -131,9 +132,8 @@ func TestHandleRegenerateRecoveryKeys(t *testing.T) {
 		nonAdminToken := "non-admin-role-token"
 		tokenHash := sha256.Sum256([]byte(nonAdminToken))
 		pJSON, _ := json.Marshal([]config.Policy{{Prefix: "*", Methods: []string{"GET"}}})
-		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
-		defer cancel()
-		err := db.PutRole(ctx, "non-admin-role", tokenHash[:], pJSON, false, false, nil)
+		var expiresAt *time.Time
+		err := db.PutRole(context.Background(), "non-admin-role", tokenHash[:], pJSON, false, false, expiresAt)
 		require.NoError(t, err)
 
 		req := httptest.NewRequest("POST", "/v1/recovery-keys/regenerate", nil)
