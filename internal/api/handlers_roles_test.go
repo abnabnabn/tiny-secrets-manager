@@ -131,7 +131,9 @@ func TestHandleRegenerateRecoveryKeys(t *testing.T) {
 		nonAdminToken := "non-admin-role-token"
 		tokenHash := sha256.Sum256([]byte(nonAdminToken))
 		pJSON, _ := json.Marshal([]config.Policy{{Prefix: "*", Methods: []string{"GET"}}})
-		err := db.PutRole(context.Background(), "non-admin-role", tokenHash[:], pJSON, false, false, nil)
+		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		defer cancel()
+		err := db.PutRole(ctx, "non-admin-role", tokenHash[:], pJSON, false, false, nil)
 		require.NoError(t, err)
 
 		req := httptest.NewRequest("POST", "/v1/recovery-keys/regenerate", nil)
