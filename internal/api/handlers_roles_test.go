@@ -2,10 +2,13 @@ package api
 
 import (
 	"bytes"
+	"context"
+	"crypto/sha256"
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
 	"testing"
+	"time"
 
 	"tiny-secrets-manager/internal/config"
 	"tiny-secrets-manager/internal/store"
@@ -150,20 +153,74 @@ func TestHandleRegenerateRecoveryKeys(t *testing.T) {
 	_, db, mux, adminToken := setupTestServer(t)
 	defer db.Close()
 
-	req := httptest.NewRequest("POST", "/v1/recovery-keys/regenerate", nil)
-	req.Header.Set("Authorization", "Bearer "+adminToken)
-	rec := httptest.NewRecorder()
-	mux.ServeHTTP(rec, req)
+	t.Run("success_admin", func(t *testing.T) {
+		req := httptest.NewRequest("POST", "/v1/recovery-keys/regenerate", nil)
+		req.Header.Set("Authorization", "Bearer "+adminToken)
+		rec := httptest.NewRecorder()
+		mux.ServeHTTP(rec, req)
 
-	assert.Equal(t, http.StatusOK, rec.Code)
+		assert.Equal(t, http.StatusOK, rec.Code)
 
-	var resp map[string][]string
-	err := json.NewDecoder(rec.Body).Decode(&resp)
-	require.NoError(t, err)
+		var resp map[string][]string
+		err := json.NewDecoder(rec.Body).Decode(&resp)
+		require.NoError(t, err)
 
-	keys := resp["recovery_keys"]
-	require.Len(t, keys, 3)
-	for _, k := range keys {
-		assert.NotEmpty(t, k)
-	}
+		keys := resp["recovery_keys"]
+		require.Len(t, keys, 3)
+		for _, k := range keys {
+			assert.NotEmpty(t, k)
+		}
+	})
+
+	t.Run("forbidden_non_admin", func(t *testing.T) {
+		nonAdminToken := "non-admin-role-token"
+		tokenHash := sha256.Sum256([]byte(nonAdminToken))
+		pJSON, _ := json.Marshal([]config.Policy{{Prefix: "*", Methods: []string{"GET"}}})
+		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		defer cancel()
+		err := db.PutRole(ctx, "non-admin-role", tokenHash[:], pJSON, false, false, nil)
+		require.NoError(t, err)
+
+		req := httptest.NewRequest("POST", "/v1/recovery-keys/regenerate", nil)
+		req.Header.Set("Authorization", "Bearer "+nonAdminToken)
+		rec := httptest.NewRecorder()
+		mux.ServeHTTP(rec, req)
+
+		assert.Equal(t, http.StatusForbidden, rec.Code)
+
+		var resp ErrorResponse
+		err = json.NewDecoder(rec.Body).Decode(&resp)
+		require.NoError(t, err)
+		assert.Equal(t, "forbidden", resp.Error)
+		assert.Equal(t, http.StatusForbidden, resp.Status)
+	})
+
+	t.Run("unauthorized_missing_token", func(t *testing.T) {
+		req := httptest.NewRequest("POST", "/v1/recovery-keys/regenerate", nil)
+		rec := httptest.NewRecorder()
+		mux.ServeHTTP(rec, req)
+
+		assert.Equal(t, http.StatusUnauthorized, rec.Code)
+
+		var resp ErrorResponse
+		err := json.NewDecoder(rec.Body).Decode(&resp)
+		require.NoError(t, err)
+		assert.Equal(t, "unauthorized", resp.Error)
+		assert.Equal(t, http.StatusUnauthorized, resp.Status)
+	})
+
+	t.Run("unauthorized_invalid_token", func(t *testing.T) {
+		req := httptest.NewRequest("POST", "/v1/recovery-keys/regenerate", nil)
+		req.Header.Set("Authorization", "Bearer invalid-token")
+		rec := httptest.NewRecorder()
+		mux.ServeHTTP(rec, req)
+
+		assert.Equal(t, http.StatusUnauthorized, rec.Code)
+
+		var resp ErrorResponse
+		err := json.NewDecoder(rec.Body).Decode(&resp)
+		require.NoError(t, err)
+		assert.Equal(t, "unauthorized", resp.Error)
+		assert.Equal(t, http.StatusUnauthorized, resp.Status)
+	})
 }
