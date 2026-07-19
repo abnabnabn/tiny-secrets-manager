@@ -21,6 +21,8 @@ func TestHandleRoleLifecycle(t *testing.T) {
 	_, db, mux, adminToken := setupTestServer(t)
 	defer db.Close()
 
+	var roleToken string
+
 	// 1. Create Role
 	t.Run("create_role", func(t *testing.T) {
 		body := map[string]interface{}{
@@ -42,6 +44,18 @@ func TestHandleRoleLifecycle(t *testing.T) {
 		err := json.NewDecoder(rec.Body).Decode(&resp)
 		require.NoError(t, err)
 		assert.NotEmpty(t, resp["token"])
+		roleToken = resp["token"]
+
+		// Verify role token works
+		reqMe := httptest.NewRequest("GET", "/v1/auth/me", nil)
+		reqMe.Header.Set("Authorization", "Bearer "+roleToken)
+		recMe := httptest.NewRecorder()
+		mux.ServeHTTP(recMe, reqMe)
+		assert.Equal(t, http.StatusOK, recMe.Code)
+		var client Client
+		err = json.NewDecoder(recMe.Body).Decode(&client)
+		require.NoError(t, err)
+		assert.Equal(t, "test-machine", client.Name)
 	})
 
 	// 2. List Roles
@@ -81,6 +95,14 @@ func TestHandleRoleLifecycle(t *testing.T) {
 
 	// 4. Regenerate Role
 	t.Run("regenerate_role", func(t *testing.T) {
+		// Non-admin token cannot regenerate roles
+		reqForbidden := httptest.NewRequest("POST", "/v1/roles/test-machine/regenerate", nil)
+		reqForbidden.Header.Set("Authorization", "Bearer "+roleToken)
+		recForbidden := httptest.NewRecorder()
+		mux.ServeHTTP(recForbidden, reqForbidden)
+		assert.Equal(t, http.StatusForbidden, recForbidden.Code)
+
+		// Admin can regenerate roles
 		req := httptest.NewRequest("POST", "/v1/roles/test-machine/regenerate", nil)
 		req.Header.Set("Authorization", "Bearer "+adminToken)
 		rec := httptest.NewRecorder()
@@ -91,7 +113,29 @@ func TestHandleRoleLifecycle(t *testing.T) {
 		var resp map[string]string
 		err := json.NewDecoder(rec.Body).Decode(&resp)
 		require.NoError(t, err)
-		assert.NotEmpty(t, resp["token"])
+		newToken := resp["token"]
+		assert.NotEmpty(t, newToken)
+
+		// Verify old token is now unauthorized
+		reqOld := httptest.NewRequest("GET", "/v1/auth/me", nil)
+		reqOld.Header.Set("Authorization", "Bearer "+roleToken)
+		recOld := httptest.NewRecorder()
+		mux.ServeHTTP(recOld, reqOld)
+		assert.Equal(t, http.StatusUnauthorized, recOld.Code)
+
+		// Verify new token works
+		reqNew := httptest.NewRequest("GET", "/v1/auth/me", nil)
+		reqNew.Header.Set("Authorization", "Bearer "+newToken)
+		recNew := httptest.NewRecorder()
+		mux.ServeHTTP(recNew, reqNew)
+		assert.Equal(t, http.StatusOK, recNew.Code)
+		var client Client
+		err = json.NewDecoder(recNew.Body).Decode(&client)
+		require.NoError(t, err)
+		assert.Equal(t, "test-machine", client.Name)
+
+		// Update roleToken for subsequent steps if any
+		roleToken = newToken
 	})
 
 	// 5. Delete Role
