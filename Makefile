@@ -1,6 +1,9 @@
-.PHONY: help all build build-server build-cli run test clean tidy setup run-env install uninstall dev-link dev-unlink lint fmt vulncheck redeploy setup-backup-dir
+.PHONY: help all build build-server build-cli build-all run test clean tidy setup run-env install uninstall dev-link dev-unlink lint fmt vulncheck redeploy setup-backup-dir
 
 BIN_DIR := bin
+HOST_OS := $(shell go env GOOS)
+HOST_ARCH := $(shell go env GOARCH)
+HOST_PLATFORM := $(HOST_OS)-$(HOST_ARCH)
 BINARY := $(BIN_DIR)/tiny-secrets-manager
 CLI_BINARY := $(BIN_DIR)/tsm
 MAIN_PKG := ./cmd/tsm-server
@@ -20,9 +23,10 @@ help:
 	@echo "  make help           - Show this help message"
 	@echo "  make all            - Run format, lint, vulnerabilities check, and build"
 	@echo "  make setup          - Build and prepare the workspace for first run"
-	@echo "  make build          - Build both the server and the CLI binaries"
+	@echo "  make build          - Build both the server and the CLI binaries (use ALL=true to build all platforms)"
 	@echo "  make build-server   - Build the server binary only"
 	@echo "  make build-cli      - Build the CLI binary only"
+	@echo "  make build-all      - Build binaries for all supported platforms (macOS Silicon, Linux AMD64, Raspberry Pi ARM64, Windows AMD64/ARM64)"
 	@echo "  make run            - Build and start the server"
 	@echo "  make run-env        - Build and start the server via environment variables"
 	@echo "  make test           - Run all tests with coverage"
@@ -54,17 +58,45 @@ setup: tidy fmt lint gosec vulncheck test build
 	@echo ""
 
 build: build-server build-cli
+ifneq ($(ALL),)
+	@echo "Cross-compiling server and CLI for macOS, Linux, and Windows..."
+	@# macOS Apple Silicon
+	@mkdir -p $(BIN_DIR)/darwin-arm64
+	@GOOS=darwin GOARCH=arm64 go build -ldflags="$(LDFLAGS)" -trimpath -o $(BIN_DIR)/darwin-arm64/tiny-secrets-manager $(MAIN_PKG)
+	@GOOS=darwin GOARCH=arm64 go build -ldflags="$(LDFLAGS)" -trimpath -o $(BIN_DIR)/darwin-arm64/tsm $(CLI_PKG)
+	@# Linux AMD64
+	@mkdir -p $(BIN_DIR)/linux-amd64
+	@GOOS=linux GOARCH=amd64 go build -ldflags="$(LDFLAGS)" -trimpath -o $(BIN_DIR)/linux-amd64/tiny-secrets-manager $(MAIN_PKG)
+	@GOOS=linux GOARCH=amd64 go build -ldflags="$(LDFLAGS)" -trimpath -o $(BIN_DIR)/linux-amd64/tsm $(CLI_PKG)
+	@# Raspberry Pi & Cloud ARM64 (Linux ARM64 - 64-bit)
+	@mkdir -p $(BIN_DIR)/linux-arm64
+	@GOOS=linux GOARCH=arm64 go build -ldflags="$(LDFLAGS)" -trimpath -o $(BIN_DIR)/linux-arm64/tiny-secrets-manager $(MAIN_PKG)
+	@GOOS=linux GOARCH=arm64 go build -ldflags="$(LDFLAGS)" -trimpath -o $(BIN_DIR)/linux-arm64/tsm $(CLI_PKG)
+	@# Windows AMD64
+	@mkdir -p $(BIN_DIR)/windows-amd64
+	@GOOS=windows GOARCH=amd64 go build -ldflags="$(LDFLAGS)" -trimpath -o $(BIN_DIR)/windows-amd64/tiny-secrets-manager.exe $(MAIN_PKG)
+	@GOOS=windows GOARCH=amd64 go build -ldflags="$(LDFLAGS)" -trimpath -o $(BIN_DIR)/windows-amd64/tsm.exe $(CLI_PKG)
+	@# Windows ARM64
+	@mkdir -p $(BIN_DIR)/windows-arm64
+	@GOOS=windows GOARCH=arm64 go build -ldflags="$(LDFLAGS)" -trimpath -o $(BIN_DIR)/windows-arm64/tiny-secrets-manager.exe $(MAIN_PKG)
+	@GOOS=windows GOARCH=arm64 go build -ldflags="$(LDFLAGS)" -trimpath -o $(BIN_DIR)/windows-arm64/tsm.exe $(CLI_PKG)
+endif
 
 build-server:
 	@echo "Building Tiny Secrets Manager server binary..."
-	@mkdir -p $(BIN_DIR)
+	@mkdir -p $(BIN_DIR)/$(HOST_PLATFORM)
 	@go run cmd/prebuild/main.go
-	@go build -ldflags="$(LDFLAGS)" -trimpath -o $(BINARY) $(MAIN_PKG)
+	@go build -ldflags="$(LDFLAGS)" -trimpath -o $(BIN_DIR)/$(HOST_PLATFORM)/tiny-secrets-manager $(MAIN_PKG)
+	@ln -sf $(HOST_PLATFORM)/tiny-secrets-manager $(BINARY)
 
 build-cli:
 	@echo "Building Tiny Secrets Manager CLI binary..."
-	@mkdir -p $(BIN_DIR)
-	@go build -ldflags="$(LDFLAGS)" -trimpath -o $(CLI_BINARY) $(CLI_PKG)
+	@mkdir -p $(BIN_DIR)/$(HOST_PLATFORM)
+	@go build -ldflags="$(LDFLAGS)" -trimpath -o $(BIN_DIR)/$(HOST_PLATFORM)/tsm $(CLI_PKG)
+	@ln -sf $(HOST_PLATFORM)/tsm $(CLI_BINARY)
+
+build-all:
+	@$(MAKE) build ALL=true
 
 run: build-server
 	@echo "Starting Tiny Secrets Manager..."

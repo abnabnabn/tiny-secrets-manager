@@ -12,34 +12,6 @@ jobs:
   build-release:
     name: Build and Release
     runs-on: ubuntu-latest
-    strategy:
-      matrix:
-        include:
-          - os: linux
-            arch: amd64
-            suffix: ""
-            cmd: tar -czf
-            ext: .tar.gz
-          - os: linux
-            arch: arm64
-            suffix: ""
-            cmd: tar -czf
-            ext: .tar.gz
-          - os: darwin
-            arch: amd64
-            suffix: ""
-            cmd: tar -czf
-            ext: .tar.gz
-          - os: darwin
-            arch: arm64
-            suffix: ""
-            cmd: tar -czf
-            ext: .tar.gz
-          - os: windows
-            arch: amd64
-            suffix: ".exe"
-            cmd: zip -qj
-            ext: .zip
 
     steps:
       - name: Checkout repository
@@ -51,38 +23,37 @@ jobs:
           go-version-file: 'go.mod'
           cache: true
 
-      - name: Build Binaries
+      - name: Build All Platforms
         run: |
-          CLI_BINARY_NAME=tsm${{ matrix.suffix }}
-          CLI_PACKAGE_NAME=tsm-cli-${{ matrix.os }}-${{ matrix.arch }}${{ matrix.ext }}
+          make build-all
+
+      - name: Package Binaries
+        run: |
+          mkdir -p dist
           
-          SERVER_BINARY_NAME=tiny-secrets-manager${{ matrix.suffix }}
-          SERVER_PACKAGE_NAME=tiny-secrets-manager-${{ matrix.os }}-${{ matrix.arch }}${{ matrix.ext }}
+          # macOS Apple Silicon
+          tar -czf dist/tiny-secrets-manager-darwin-arm64.tar.gz -C bin/darwin-arm64 tiny-secrets-manager
+          tar -czf dist/tsm-cli-darwin-arm64.tar.gz -C bin/darwin-arm64 tsm
           
-          # Get version from tag, stripping 'v' prefix
-          VERSION=${GITHUB_REF_NAME#v}
+          # Linux AMD64
+          tar -czf dist/tiny-secrets-manager-linux-amd64.tar.gz -C bin/linux-amd64 tiny-secrets-manager
+          tar -czf dist/tsm-cli-linux-amd64.tar.gz -C bin/linux-amd64 tsm
           
-          # Run prebuild to bundle assets into server code
-          go run cmd/prebuild/main.go
+          # Linux ARM64
+          tar -czf dist/tiny-secrets-manager-linux-arm64.tar.gz -C bin/linux-arm64 tiny-secrets-manager
+          tar -czf dist/tsm-cli-linux-arm64.tar.gz -C bin/linux-arm64 tsm
           
-          # Build optimized, statically linked binaries
-          GOOS=${{ matrix.os }} GOARCH=${{ matrix.arch }} go build -ldflags="-s -w -X main.Version=${VERSION}" -trimpath -o bin/$CLI_BINARY_NAME ./cmd/tsm-cli/main.go
-          GOOS=${{ matrix.os }} GOARCH=${{ matrix.arch }} go build -ldflags="-s -w -X main.Version=${VERSION}" -trimpath -o bin/$SERVER_BINARY_NAME ./cmd/tsm-server/main.go
+          # Windows AMD64
+          zip -qj dist/tiny-secrets-manager-windows-amd64.zip bin/windows-amd64/tiny-secrets-manager.exe
+          zip -qj dist/tsm-cli-windows-amd64.zip bin/windows-amd64/tsm.exe
           
-          # Package the binaries
-          cd bin
-          ${{ matrix.cmd }} ../$CLI_PACKAGE_NAME $CLI_BINARY_NAME
-          ${{ matrix.cmd }} ../$SERVER_PACKAGE_NAME $SERVER_BINARY_NAME
-          cd ..
-          
-          echo "CLI_PACKAGE_NAME=$CLI_PACKAGE_NAME" >> $GITHUB_ENV
-          echo "SERVER_PACKAGE_NAME=$SERVER_PACKAGE_NAME" >> $GITHUB_ENV
+          # Windows ARM64
+          zip -qj dist/tiny-secrets-manager-windows-arm64.zip bin/windows-arm64/tiny-secrets-manager.exe
+          zip -qj dist/tsm-cli-windows-arm64.zip bin/windows-arm64/tsm.exe
 
       - name: Upload Release Assets
         uses: softprops/action-gh-release@v3
         with:
-          files: |
-            ${{ env.CLI_PACKAGE_NAME }}
-            ${{ env.SERVER_PACKAGE_NAME }}
+          files: dist/*
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

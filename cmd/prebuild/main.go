@@ -121,9 +121,9 @@ export const createRoot = window.ReactDOM.createRoot;
 	targets := []struct{ OS, Arch string }{
 		{"linux", "amd64"},
 		{"linux", "arm64"},
-		{"darwin", "amd64"},
 		{"darwin", "arm64"},
 		{"windows", "amd64"},
+		{"windows", "arm64"},
 	}
 
 	version := "dev"

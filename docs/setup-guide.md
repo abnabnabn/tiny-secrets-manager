@@ -46,12 +46,16 @@ If you prefer running the raw server binary directly on your host machine withou
 
 ### Building From Source
 If you want to compile the server yourself from the source code:
-1. Compile the server (this builds the server, CLI, and web UI):
+1. Compile the server (this builds the server, CLI, and web UI for your current platform):
    ```bash
    make setup
    make build
    ```
-2. You can optionally link the generated binaries (`tiny-secrets-manager` and `tsm`) into your `$PATH` (typically `~/.local/bin`) by running:
+   *To build binaries for all supported platforms (macOS Silicon, Linux AMD64, Raspberry Pi ARM64, Windows AMD64/ARM64) at once, run:*
+   ```bash
+   make build-all
+   ```
+2. You can optionally link the generated host binaries (`tiny-secrets-manager` and `tsm`) into your `$PATH` (typically `~/.local/bin`) by running:
    ```bash
    make dev-link
    ```
@@ -129,7 +133,7 @@ sudo make install # (Copies to /usr/local/bin)
 > 
 > To enable and start it manually: `sudo systemctl enable --now tiny-secrets-manager`
 
-- To use the CLI on **other machines**, you will need to manually copy the generated `tsm` binary from your `bin/` directory to those machines.  If you're building from source then you shouldn't need help here!
+- To use the CLI on **other machines**, you will need to manually copy the generated `tsm` binary from your `bin/` directory (or from the respective `bin/<os>-<arch>/` subdirectory if you built with `make build-all`) to those machines.  If you're building from source then you shouldn't need help here!
 
 ---
 
@@ -213,7 +217,7 @@ To unlock it, you must use one of the three **Emergency Recovery Keys** generate
 1. Locate one of your saved Emergency Recovery Keys.
 2. Start the server (either via Docker or the binary) and pass the recovery key instead of the master key, using the `TSM_RECOVERY_KEY` environment variable:
    ```bash
-   TSM_RECOVERY_KEY="<YOUR_RECOVERY_KEY>" ./bin/tsm-server
+   TSM_RECOVERY_KEY="<YOUR_RECOVERY_KEY>" ./bin/tiny-secrets-manager
    ```
    *(Or set it in your `docker-compose.yaml` if using Docker).*
 3. The server will use the Recovery Key to decrypt the vault, securely rotate the internal encryption keys, and automatically generate a **brand new** Master Key.
