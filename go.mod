@@ -1,6 +1,6 @@
 module tiny-secrets-manager
 
-go 1.25.11
+go 1.25.12
 
 require (
 	github.com/evanw/esbuild v0.28.1
