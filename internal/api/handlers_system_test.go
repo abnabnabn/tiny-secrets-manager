@@ -2,14 +2,16 @@ package api
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"os"
 	"testing"
 )
 
 func TestSystemHandlers(t *testing.T) {
-	_, _, mux, adminToken := setupTestServer(t)
+	_, db, mux, adminToken := setupTestServer(t)
 	sharedTmpDir := t.TempDir()
 
 	t.Run("GetSettings_Success", func(t *testing.T) {
@@ -53,6 +55,12 @@ func TestSystemHandlers(t *testing.T) {
 	})
 
 	t.Run("TriggerBackup_Success", func(t *testing.T) {
+		backupDir := t.TempDir()
+		ctx := context.Background()
+		if err := db.PutSetting(ctx, "backup_target", backupDir); err != nil {
+			t.Fatalf("failed to set backup_target: %v", err)
+		}
+
 		req := httptest.NewRequest("POST", "/v1/system/backup", nil)
 		req.Header.Set("Authorization", "Bearer "+adminToken)
 		w := httptest.NewRecorder()
@@ -60,6 +68,43 @@ func TestSystemHandlers(t *testing.T) {
 
 		if w.Code != http.StatusOK {
 			t.Errorf("expected 200, got %d", w.Code)
+		}
+
+		// Verify that a backup file was created
+		entries, err := os.ReadDir(backupDir)
+		if err != nil {
+			t.Fatalf("failed to read backup dir: %v", err)
+		}
+		if len(entries) != 1 {
+			t.Errorf("expected 1 backup file, got %d", len(entries))
+		}
+	})
+
+	t.Run("TriggerBackup_ForbiddenForNonAdmin", func(t *testing.T) {
+		req := httptest.NewRequest("POST", "/v1/system/backup", nil)
+		// No authorization header (or non-admin)
+		w := httptest.NewRecorder()
+		mux.ServeHTTP(w, req)
+
+		if w.Code != http.StatusForbidden && w.Code != http.StatusUnauthorized {
+			t.Errorf("expected 403 or 401, got %d", w.Code)
+		}
+	})
+
+	t.Run("TriggerBackup_Failure_InvalidPath", func(t *testing.T) {
+		// Configure an invalid/unwritable backup target
+		ctx := context.Background()
+		if err := db.PutSetting(ctx, "backup_target", "/invalid/nonexistent/directory/that/cannot/be/created/or/written"); err != nil {
+			t.Fatalf("failed to set backup_target: %v", err)
+		}
+
+		req := httptest.NewRequest("POST", "/v1/system/backup", nil)
+		req.Header.Set("Authorization", "Bearer "+adminToken)
+		w := httptest.NewRecorder()
+		mux.ServeHTTP(w, req)
+
+		if w.Code != http.StatusInternalServerError {
+			t.Errorf("expected 500, got %d", w.Code)
 		}
 	})
 
