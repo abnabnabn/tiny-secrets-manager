@@ -66,6 +66,11 @@ func (s *Server) runBackup() error {
 		return nil // nothing to do
 	}
 
+	target = strings.TrimSpace(target)
+	if strings.HasPrefix(target, "-") {
+		return fmt.Errorf("invalid backup target: target cannot start with a dash")
+	}
+
 	timestamp := time.Now().UTC().Format("20060102_150405")
 	filename := fmt.Sprintf("tsm_backup_%s.db", timestamp)
 
@@ -109,8 +114,12 @@ func (s *Server) runBackup() error {
 			return fmt.Errorf("remote backup vacuum failed: %w", err)
 		}
 
+		if strings.HasPrefix(finalTarget, "-") {
+			return fmt.Errorf("invalid backup final target: target cannot start with a dash")
+		}
+
 		// #nosec G204 - The server explicitly executes SCP to perform the remote backup transfer
-		cmd := exec.CommandContext(ctx, "scp", "-o", "StrictHostKeyChecking=no", tmpFile, finalTarget)
+		cmd := exec.CommandContext(ctx, "scp", "-o", "StrictHostKeyChecking=no", "--", tmpFile, finalTarget)
 		if out, err := cmd.CombinedOutput(); err != nil {
 			return fmt.Errorf("scp backup failed: %w (output: %s)", err, string(out))
 		}
