@@ -45,9 +45,12 @@ func (s *Server) backupLoop() {
 			// Run retention policy periodically
 			if time.Since(lastRetentionRun) >= 1*time.Hour {
 				if target, err := s.store.GetSetting(context.Background(), "backup_target"); err == nil && target != "" {
-					isRemote := strings.Contains(target, "@") && strings.Contains(target, ":")
-					if !isRemote {
-						s.applyRetentionPolicy(target, false)
+					target = strings.TrimSpace(target)
+					if target != "" && !strings.HasPrefix(target, "-") {
+						isRemote := strings.Contains(target, "@") && strings.Contains(target, ":")
+						if !isRemote {
+							s.applyRetentionPolicy(target, false)
+						}
 					}
 				}
 				lastRetentionRun = time.Now()
@@ -64,6 +67,15 @@ func (s *Server) runBackup() error {
 	target, err := s.store.GetSetting(ctx, "backup_target")
 	if err != nil || target == "" {
 		return nil // nothing to do
+	}
+
+	target = strings.TrimSpace(target)
+	if target == "" {
+		return nil
+	}
+
+	if strings.HasPrefix(target, "-") {
+		return fmt.Errorf("invalid backup target: cannot start with a dash")
 	}
 
 	timestamp := time.Now().UTC().Format("20060102_150405")
@@ -88,6 +100,10 @@ func (s *Server) runBackup() error {
 		}
 	}
 
+	if strings.HasPrefix(finalTarget, "-") {
+		return fmt.Errorf("invalid backup target: final target cannot start with a dash")
+	}
+
 	if !isRemote {
 		if err := os.MkdirAll(filepath.Dir(finalTarget), 0750); err != nil {
 			return fmt.Errorf("failed to create backup directory: %w", err)
@@ -110,7 +126,7 @@ func (s *Server) runBackup() error {
 		}
 
 		// #nosec G204 - The server explicitly executes SCP to perform the remote backup transfer
-		cmd := exec.CommandContext(ctx, "scp", "-o", "StrictHostKeyChecking=no", tmpFile, finalTarget)
+		cmd := exec.CommandContext(ctx, "scp", "-o", "StrictHostKeyChecking=no", "--", tmpFile, finalTarget)
 		if out, err := cmd.CombinedOutput(); err != nil {
 			return fmt.Errorf("scp backup failed: %w (output: %s)", err, string(out))
 		}
