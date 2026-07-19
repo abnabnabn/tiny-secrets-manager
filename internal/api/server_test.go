@@ -170,3 +170,117 @@ func TestClient_Can(t *testing.T) {
 	assert.True(t, globalClient.Can("GET", "anything"))
 	assert.False(t, globalClient.Can("PUT", "anything"))
 }
+
+func TestServer_ResolveVariables(t *testing.T) {
+	srv, db, _, _ := setupTestServer(t)
+	defer db.Close()
+	ctx := context.Background()
+
+	// Seed secrets
+	require.NoError(t, db.Put(ctx, "simple.raw", []byte("hello")))
+
+	jsonVal, err := json.Marshal(map[string]string{"value": "world"})
+	require.NoError(t, err)
+	require.NoError(t, db.Put(ctx, "simple.json", jsonVal))
+
+	require.NoError(t, db.Put(ctx, "nested.1", []byte("${nested.2}!")))
+	require.NoError(t, db.Put(ctx, "nested.2", []byte("${simple.raw} ${simple.json}")))
+	require.NoError(t, db.Put(ctx, "nested.forbidden", []byte("${forbidden.key}")))
+
+	require.NoError(t, db.Put(ctx, "forbidden.key", []byte("supersecret")))
+
+	require.NoError(t, db.Put(ctx, "circular.1", []byte("${circular.2}")))
+	require.NoError(t, db.Put(ctx, "circular.2", []byte("${circular.1}")))
+
+	require.NoError(t, db.Put(ctx, "branch.parent", []byte("${branch.child} & ${branch.child}")))
+	require.NoError(t, db.Put(ctx, "branch.child", []byte("child_val")))
+
+	adminClient := Client{
+		IsAdmin: true,
+	}
+
+	restrictedClient := Client{
+		IsAdmin: false,
+		Policies: []config.Policy{
+			{Prefix: "simple.*", Methods: []string{"GET"}},
+			{Prefix: "nested.*", Methods: []string{"GET"}},
+			{Prefix: "circular.*", Methods: []string{"GET"}},
+			{Prefix: "branch.*", Methods: []string{"GET"}},
+		},
+	}
+
+	tests := []struct {
+		name     string
+		client   Client
+		input    string
+		expected string
+	}{
+		{
+			name:     "no variables",
+			client:   adminClient,
+			input:    "just plain text",
+			expected: "just plain text",
+		},
+		{
+			name:     "simple raw variable resolution",
+			client:   adminClient,
+			input:    "say ${simple.raw}",
+			expected: "say hello",
+		},
+		{
+			name:     "simple json variable resolution",
+			client:   adminClient,
+			input:    "hello ${simple.json}",
+			expected: "hello world",
+		},
+		{
+			name:     "recursive resolution with multiple levels",
+			client:   adminClient,
+			input:    "nested: ${nested.1}",
+			expected: "nested: hello world!",
+		},
+		{
+			name:     "missing variable",
+			client:   adminClient,
+			input:    "missing: ${does.not.exist}",
+			expected: "missing: ",
+		},
+		{
+			name:     "circular reference resolution limits recursion",
+			client:   adminClient,
+			input:    "loop: ${circular.1}",
+			expected: "loop: ${circular.1}",
+		},
+		{
+			name:     "independent branches of resolution",
+			client:   adminClient,
+			input:    "branches: ${branch.parent}",
+			expected: "branches: child_val & child_val",
+		},
+		{
+			name:     "restricted client allowed access",
+			client:   restrictedClient,
+			input:    "${simple.raw} and ${simple.json}",
+			expected: "hello and world",
+		},
+		{
+			name:     "restricted client denied direct access",
+			client:   restrictedClient,
+			input:    "secret: ${forbidden.key}",
+			expected: "secret: ",
+		},
+		{
+			name:     "restricted client denied transitive access via nested",
+			client:   restrictedClient,
+			input:    "nested: ${nested.forbidden}",
+			expected: "nested: ",
+		},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			actual := srv.resolveVariables(ctx, tc.client, tc.input, nil)
+			assert.Equal(t, tc.expected, actual)
+		})
+	}
+}
