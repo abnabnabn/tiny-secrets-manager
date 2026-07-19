@@ -319,3 +319,34 @@ func TestStore_LegacyMigration(t *testing.T) {
 	assert.True(t, r.CanCreate)
 	assert.NotNil(t, r.ExpiresAt)
 }
+
+func TestStore_ExtendRoleExpiry(t *testing.T) {
+	st := newTestStore(t)
+	defer st.Close()
+	ctx := context.Background()
+
+	hash := sha256.Sum256([]byte("extend_token"))
+	initialExpiry := time.Now().Add(1 * time.Hour).Truncate(time.Second)
+
+	// Create a role with an initial expiry time
+	err := st.PutRole(ctx, "extend_role", hash[:], []byte("[]"), false, false, &initialExpiry)
+	require.NoError(t, err)
+
+	// Fetch role to verify initial state
+	r, err := st.GetRoleByName(ctx, "extend_role")
+	require.NoError(t, err)
+	assert.Equal(t, "extend_role", r.Name)
+	assert.NotNil(t, r.ExpiresAt)
+	assert.True(t, r.ExpiresAt.Equal(initialExpiry))
+
+	// Extend the role's expiration time
+	newExpiry := time.Now().Add(5 * time.Hour).Truncate(time.Second)
+	err = st.ExtendRoleExpiry(ctx, "extend_role", newExpiry)
+	require.NoError(t, err)
+
+	// Verify the role has been updated
+	rUpdated, err := st.GetRoleByName(ctx, "extend_role")
+	require.NoError(t, err)
+	assert.NotNil(t, rUpdated.ExpiresAt)
+	assert.True(t, rUpdated.ExpiresAt.Equal(newExpiry))
+}
