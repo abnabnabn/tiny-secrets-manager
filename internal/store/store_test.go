@@ -152,12 +152,21 @@ func TestStore_Admins(t *testing.T) {
 	ctx := context.Background()
 
 	// 1. Check before init
-	_, err := st.GetAdmin(ctx, "admin")
+	count, err := st.CountAdmins(ctx)
+	require.NoError(t, err)
+	assert.Equal(t, 0, count)
+
+	_, err = st.GetAdmin(ctx, "admin")
 	assert.ErrorIs(t, err, sql.ErrNoRows)
 
 	// 2. Init Admin
 	err = st.PutAdmin(ctx, "admin", "hashed_password")
 	require.NoError(t, err)
+
+	// Check count after adding one admin
+	count, err = st.CountAdmins(ctx)
+	require.NoError(t, err)
+	assert.Equal(t, 1, count)
 
 	// 3. Check Admin
 	hash, err := st.GetAdmin(ctx, "admin")
@@ -170,6 +179,20 @@ func TestStore_Admins(t *testing.T) {
 
 	hash, _ = st.GetAdmin(ctx, "admin")
 	assert.Equal(t, "new_hash", hash)
+
+	// Check count after updating admin (should still be 1)
+	count, err = st.CountAdmins(ctx)
+	require.NoError(t, err)
+	assert.Equal(t, 1, count)
+
+	// 5. Add another Admin
+	err = st.PutAdmin(ctx, "admin2", "hash2")
+	require.NoError(t, err)
+
+	// Check count after adding second admin (should be 2)
+	count, err = st.CountAdmins(ctx)
+	require.NoError(t, err)
+	assert.Equal(t, 2, count)
 }
 
 func newTestStoreWithPath(t *testing.T) (*Store, string) {
