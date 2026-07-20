@@ -373,3 +373,114 @@ func TestStore_ExtendRoleExpiry(t *testing.T) {
 	assert.NotNil(t, rUpdated.ExpiresAt)
 	assert.True(t, rUpdated.ExpiresAt.Equal(newExpiry))
 }
+
+func newBenchmarkStore(b *testing.B) *Store {
+	tmpDir := b.TempDir()
+	dbPath := filepath.Join(tmpDir, "benchmark.db")
+
+	key := make([]byte, 32)
+	_, _ = rand.Read(key)
+	masterKeyB64 := base64.StdEncoding.EncodeToString(key)
+
+	logger := slog.New(slog.NewTextHandler(os.Stdout, &slog.HandlerOptions{Level: slog.LevelError}))
+
+	st, err := New(dbPath, masterKeyB64, "", logger)
+	if err != nil {
+		b.Fatalf("failed to create store: %v", err)
+	}
+	return st
+}
+
+func BenchmarkPutSetting_Individual(b *testing.B) {
+	st := newBenchmarkStore(b)
+	defer st.Close()
+	ctx := context.Background()
+
+	settings := map[string]string{
+		"setting_a": "value_a",
+		"setting_b": "value_b",
+		"setting_c": "value_c",
+		"setting_d": "value_d",
+		"setting_e": "value_e",
+		"setting_f": "value_f",
+		"setting_g": "value_g",
+		"setting_h": "value_h",
+		"setting_i": "value_i",
+		"setting_j": "value_j",
+	}
+
+	b.ResetTimer()
+	for i := 0; i < b.N; i++ {
+		for k, v := range settings {
+			err := st.PutSetting(ctx, k, v)
+			if err != nil {
+				b.Fatalf("failed to put setting: %v", err)
+			}
+		}
+	}
+}
+
+func BenchmarkPutSettings_Bulk(b *testing.B) {
+	st := newBenchmarkStore(b)
+	defer st.Close()
+	ctx := context.Background()
+
+	settings := map[string]string{
+		"setting_a": "value_a",
+		"setting_b": "value_b",
+		"setting_c": "value_c",
+		"setting_d": "value_d",
+		"setting_e": "value_e",
+		"setting_f": "value_f",
+		"setting_g": "value_g",
+		"setting_h": "value_h",
+		"setting_i": "value_i",
+		"setting_j": "value_j",
+	}
+
+	b.ResetTimer()
+	for i := 0; i < b.N; i++ {
+		tx, err := st.db.BeginTx(ctx, nil)
+		if err != nil {
+			b.Fatalf("failed to begin tx: %v", err)
+		}
+		for k, v := range settings {
+			_, err = tx.ExecContext(ctx, `
+				INSERT INTO settings (key, value, updated_at)
+				VALUES (?, ?, ?)
+				ON CONFLICT(key) DO UPDATE SET
+					value=excluded.value, updated_at=excluded.updated_at`,
+				k, v, time.Now())
+			if err != nil {
+				_ = tx.Rollback()
+				b.Fatalf("failed to exec: %v", err)
+			}
+		}
+		if err := tx.Commit(); err != nil {
+			b.Fatalf("failed to commit: %v", err)
+		}
+	}
+}
+
+func TestStore_PutSettings(t *testing.T) {
+	st := newTestStore(t)
+	defer st.Close()
+	ctx := context.Background()
+
+	// 1. Put settings bulk
+	settings := map[string]string{
+		"bulk_k1": "bulk_v1",
+		"bulk_k2": "bulk_v2",
+	}
+	err := st.PutSettings(ctx, settings)
+	require.NoError(t, err)
+
+	// 2. Verify
+	v1, err := st.GetSetting(ctx, "bulk_k1")
+	require.NoError(t, err)
+	assert.Equal(t, "bulk_v1", v1)
+
+	v2, err := st.GetSetting(ctx, "bulk_k2")
+	require.NoError(t, err)
+	assert.Equal(t, "bulk_v2", v2)
+}

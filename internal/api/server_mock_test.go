@@ -63,6 +63,7 @@ func (m *MockStorage) DeleteRole(ctx context.Context, name string) error        
 func (m *MockStorage) RegenerateRecoveryKeys(ctx context.Context) ([]string, error)  { return nil, nil }
 func (m *MockStorage) GetAllSettings(ctx context.Context) (map[string]string, error) { return nil, nil }
 func (m *MockStorage) PutSetting(ctx context.Context, key, value string) error       { return nil }
+func (m *MockStorage) PutSettings(ctx context.Context, settings map[string]string) error { return nil }
 func (m *MockStorage) GetSetting(ctx context.Context, key string) (string, error)    { return "", nil }
 func (m *MockStorage) Backup(ctx context.Context, dst string) error                  { return nil }
 func (m *MockStorage) DeleteExpiredRoles(ctx context.Context) (int64, error)         { return 0, nil }

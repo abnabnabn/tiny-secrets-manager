@@ -590,6 +590,35 @@ func (s *Store) PutSetting(ctx context.Context, key, value string) error {
 	return err
 }
 
+// PutSettings updates multiple system settings in a single transaction.
+func (s *Store) PutSettings(ctx context.Context, settings map[string]string) error {
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback()
+
+	stmt, err := tx.PrepareContext(ctx, `
+		INSERT INTO settings (key, value, updated_at)
+		VALUES (?, ?, ?)
+		ON CONFLICT(key) DO UPDATE SET
+			value=excluded.value, updated_at=excluded.updated_at`)
+	if err != nil {
+		return err
+	}
+	defer stmt.Close()
+
+	now := time.Now()
+	for key, value := range settings {
+		_, err := stmt.ExecContext(ctx, key, value, now)
+		if err != nil {
+			return err
+		}
+	}
+
+	return tx.Commit()
+}
+
 // GetSetting retrieves a system setting by key. Returns empty string if not found.
 func (s *Store) GetSetting(ctx context.Context, key string) (string, error) {
 	var val string

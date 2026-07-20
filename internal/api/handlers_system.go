@@ -37,12 +37,10 @@ func (s *Server) handlePutSettings(w http.ResponseWriter, r *http.Request) {
 	}
 
 	ctx := r.Context()
-	for k, v := range req {
-		if err := s.store.PutSetting(ctx, k, v); err != nil {
-			s.logger.Error("failed to update setting", "err", err)
-			s.respondError(w, http.StatusInternalServerError, "internal server error")
-			return
-		}
+	if err := s.store.PutSettings(ctx, req); err != nil {
+		s.logger.Error("failed to update settings", "err", err)
+		s.respondError(w, http.StatusInternalServerError, "internal server error")
+		return
 	}
 
 	w.WriteHeader(http.StatusOK)
