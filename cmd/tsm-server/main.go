@@ -25,6 +25,20 @@ import (
 
 var Version = "dev"
 
+type serverFlags struct {
+	configPath   string
+	insecure     bool
+	adminUser    string
+	adminPass    string
+	adminToken   string
+	masterKey    string
+	listen       string
+	dbPath       string
+	backupTarget string
+	recoveryKey  string
+	seedOnly     bool
+}
+
 func generateRandomString(n int) string {
 	b := make([]byte, n)
 	_, _ = rand.Read(b)
@@ -62,7 +76,7 @@ func bootstrap(logger *slog.Logger, configPath string) (*config.Config, error) {
 	return config.Load(configPath)
 }
 
-func main() {
+func handleHashCmd() bool {
 	if len(os.Args) >= 3 && os.Args[1] == "--hash" {
 		hash, err := bcrypt.GenerateFromPassword([]byte(os.Args[2]), 14)
 		if err != nil {
@@ -70,91 +84,111 @@ func main() {
 		}
 		_, _ = os.Stdout.Write(hash)
 		_, _ = os.Stdout.WriteString("\n")
-		return
+		return true
 	}
+	return false
+}
 
+func initLogger() *slog.Logger {
 	logger := slog.New(slog.NewJSONHandler(os.Stdout, nil))
 	slog.SetDefault(logger)
+	return logger
+}
 
-	var configPath string
-	var insecureFlag bool
-	var adminUserFlag string
-	var adminPassFlag string
-	var adminTokenFlag string
-	var masterKeyFlag string
-	var listenFlag string
-	var dbPathFlag string
-	var backupTargetFlag string
-	var recoveryKeyFlag string
-	var seedOnlyFlag bool
+func parseFlags() *serverFlags {
+	var f serverFlags
 
-	flag.BoolVar(&insecureFlag, "insecure", false, "Disable secure mode")
-	flag.StringVar(&adminUserFlag, "admin-user", "", "Admin username")
-	flag.StringVar(&adminPassFlag, "admin-pass", "", "Admin password")
-	flag.StringVar(&adminTokenFlag, "admin-token", "", "Admin API token")
-	flag.StringVar(&masterKeyFlag, "master-key", "", "Master key")
-	flag.StringVar(&listenFlag, "listen", "", "Listen address")
-	flag.StringVar(&dbPathFlag, "db-path", "", "Database path")
-	flag.StringVar(&backupTargetFlag, "backup-target", "", "Backup target")
-	flag.StringVar(&recoveryKeyFlag, "recovery-key", "", "Recovery key")
-	flag.BoolVar(&seedOnlyFlag, "seed-only", false, "Seed the database and exit immediately")
+	flag.BoolVar(&f.insecure, "insecure", false, "Disable secure mode")
+	flag.StringVar(&f.adminUser, "admin-user", "", "Admin username")
+	flag.StringVar(&f.adminPass, "admin-pass", "", "Admin password")
+	flag.StringVar(&f.adminToken, "admin-token", "", "Admin API token")
+	flag.StringVar(&f.masterKey, "master-key", "", "Master key")
+	flag.StringVar(&f.listen, "listen", "", "Listen address")
+	flag.StringVar(&f.dbPath, "db-path", "", "Database path")
+	flag.StringVar(&f.backupTarget, "backup-target", "", "Backup target")
+	flag.StringVar(&f.recoveryKey, "recovery-key", "", "Recovery key")
+	flag.BoolVar(&f.seedOnly, "seed-only", false, "Seed the database and exit immediately")
 
 	flag.Parse()
 
 	if flag.NArg() > 0 {
-		configPath = flag.Arg(0)
+		f.configPath = flag.Arg(0)
 	}
 
-	var cfg *config.Config
-	var err error
+	return &f
+}
 
-	cfg, err = bootstrap(logger, configPath)
-
+func setupConfigAndStore(logger *slog.Logger, flags *serverFlags) (*config.Config, *store.Store, error) {
+	cfg, err := bootstrap(logger, flags.configPath)
 	if err != nil {
-		logger.Error("failed to load config", "err", err)
-		os.Exit(1)
+		return nil, nil, fmt.Errorf("failed to load config: %w", err)
 	}
 
-	if insecureFlag {
+	if flags.insecure {
 		cfg.Insecure = true
 	}
-	if masterKeyFlag != "" {
-		cfg.MasterKey = masterKeyFlag
+	if flags.masterKey != "" {
+		cfg.MasterKey = flags.masterKey
 	}
-	if listenFlag != "" {
-		cfg.Listen = listenFlag
+	if flags.listen != "" {
+		cfg.Listen = flags.listen
 	}
-	if dbPathFlag != "" {
-		cfg.DBPath = dbPathFlag
+	if flags.dbPath != "" {
+		cfg.DBPath = flags.dbPath
 	}
 
-	recoveryKey := recoveryKeyFlag
+	recoveryKey := flags.recoveryKey
 	if recoveryKey == "" {
 		recoveryKey = os.Getenv("TSM_RECOVERY_KEY")
 	}
 
 	db, err := store.New(cfg.DBPath, cfg.MasterKey, recoveryKey, logger)
 	if err != nil {
-		logger.Error("failed to init store", "err", err)
-		os.Exit(1)
-	}
-	defer db.Close()
-
-	if err := seedAdminUser(context.Background(), db, adminUserFlag, adminPassFlag, adminTokenFlag); err != nil {
-		logger.Error("failed to seed admin user", "err", err)
-		os.Exit(1)
+		return nil, nil, fmt.Errorf("failed to init store: %w", err)
 	}
 
-	if backupTargetFlag == "" {
-		backupTargetFlag = os.Getenv("TSM_BACKUP_TARGET")
+	return cfg, db, nil
+}
+
+func seedDatabase(ctx context.Context, db *store.Store, flags *serverFlags, logger *slog.Logger) error {
+	if err := seedAdminUser(ctx, db, flags.adminUser, flags.adminPass, flags.adminToken); err != nil {
+		return fmt.Errorf("failed to seed admin user: %w", err)
 	}
-	if backupTargetFlag != "" {
-		if err := db.PutSetting(context.Background(), "backup_target", backupTargetFlag); err != nil {
+
+	backupTarget := flags.backupTarget
+	if backupTarget == "" {
+		backupTarget = os.Getenv("TSM_BACKUP_TARGET")
+	}
+	if backupTarget != "" {
+		if err := db.PutSetting(ctx, "backup_target", backupTarget); err != nil {
 			logger.Error("failed to seed backup target", "err", err)
 		}
 	}
 
-	if seedOnlyFlag {
+	return nil
+}
+
+func main() {
+	if handleHashCmd() {
+		return
+	}
+
+	logger := initLogger()
+	flags := parseFlags()
+
+	cfg, db, err := setupConfigAndStore(logger, flags)
+	if err != nil {
+		logger.Error("setup failed", "err", err)
+		os.Exit(1)
+	}
+	defer db.Close()
+
+	if err := seedDatabase(context.Background(), db, flags, logger); err != nil {
+		logger.Error("seeding failed", "err", err)
+		os.Exit(1)
+	}
+
+	if flags.seedOnly {
 		logger.Info("database seeded successfully, exiting due to -seed-only flag")
 		return
 	}
