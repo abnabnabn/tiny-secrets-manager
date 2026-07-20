@@ -149,13 +149,6 @@ func initSchema(db *sql.DB) error {
 		}
 	}
 
-	// Future migrations would be handled like this:
-	// if userVersion < 2 {
-	//     _, err := db.Exec(`...`)
-	//     db.Exec("PRAGMA user_version = 2")
-	//     userVersion = 2
-	// }
-
 	return nil
 }
 
