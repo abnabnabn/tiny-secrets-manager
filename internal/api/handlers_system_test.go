@@ -54,6 +54,91 @@ func TestSystemHandlers(t *testing.T) {
 		}
 	})
 
+	t.Run("PutSettings_ValidationFailures", func(t *testing.T) {
+		tests := []struct {
+			name    string
+			payload map[string]string
+		}{
+			{
+				name:    "unrecognized key",
+				payload: map[string]string{"invalid_key": "some_val"},
+			},
+			{
+				name:    "backup_target starts with a dash",
+				payload: map[string]string{"backup_target": "-oProxyCommand=touch/tmp/pwned"},
+			},
+			{
+				name:    "backup_interval_mins non-numeric",
+				payload: map[string]string{"backup_interval_mins": "abc"},
+			},
+			{
+				name:    "backup_interval_mins negative",
+				payload: map[string]string{"backup_interval_mins": "-5"},
+			},
+			{
+				name:    "backup_interval_mins zero",
+				payload: map[string]string{"backup_interval_mins": "0"},
+			},
+			{
+				name:    "backup_retention_all_days negative",
+				payload: map[string]string{"backup_retention_all_days": "-1"},
+			},
+			{
+				name:    "backup_retention_all_days non-numeric",
+				payload: map[string]string{"backup_retention_all_days": "xyz"},
+			},
+			{
+				name:    "backup_retention_daily_days negative",
+				payload: map[string]string{"backup_retention_daily_days": "-1"},
+			},
+			{
+				name:    "backup_retention_daily_days non-numeric",
+				payload: map[string]string{"backup_retention_daily_days": "xyz"},
+			},
+			{
+				name:    "auto_populate_env_name invalid value",
+				payload: map[string]string{"auto_populate_env_name": "yes"},
+			},
+		}
+
+		for _, tc := range tests {
+			t.Run(tc.name, func(t *testing.T) {
+				body, _ := json.Marshal(tc.payload)
+				req := httptest.NewRequest("PUT", "/v1/system/settings", bytes.NewReader(body))
+				req.Header.Set("Authorization", "Bearer "+adminToken)
+				req.Header.Set("Content-Type", "application/json")
+				w := httptest.NewRecorder()
+				mux.ServeHTTP(w, req)
+
+				if w.Code != http.StatusBadRequest {
+					t.Errorf("expected 400 Bad Request, got %d", w.Code)
+				}
+			})
+		}
+	})
+
+	t.Run("PutSettings_ValidationSuccess", func(t *testing.T) {
+		payloads := []map[string]string{
+			{"auto_populate_env_name": "true"},
+			{"auto_populate_env_name": "false"},
+			{"backup_retention_all_days": "0"},
+			{"backup_retention_daily_days": "0"},
+		}
+
+		for idx, p := range payloads {
+			body, _ := json.Marshal(p)
+			req := httptest.NewRequest("PUT", "/v1/system/settings", bytes.NewReader(body))
+			req.Header.Set("Authorization", "Bearer "+adminToken)
+			req.Header.Set("Content-Type", "application/json")
+			w := httptest.NewRecorder()
+			mux.ServeHTTP(w, req)
+
+			if w.Code != http.StatusOK {
+				t.Errorf("payload %d: expected 200 OK, got %d", idx, w.Code)
+			}
+		}
+	})
+
 	t.Run("TriggerBackup_Success", func(t *testing.T) {
 		backupDir := t.TempDir()
 		ctx := context.Background()
