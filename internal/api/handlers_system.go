@@ -3,6 +3,8 @@ package api
 import (
 	"encoding/json"
 	"net/http"
+	"strconv"
+	"strings"
 )
 
 func (s *Server) handleGetSettings(w http.ResponseWriter, r *http.Request) {
@@ -34,6 +36,44 @@ func (s *Server) handlePutSettings(w http.ResponseWriter, r *http.Request) {
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		s.respondError(w, http.StatusBadRequest, "invalid payload")
 		return
+	}
+
+	// Strict validation of settings keys and values at the input boundary
+	for k, v := range req {
+		switch k {
+		case "backup_target":
+			trimmed := strings.TrimSpace(v)
+			if strings.HasPrefix(trimmed, "-") {
+				s.respondError(w, http.StatusBadRequest, "invalid backup_target: cannot start with a dash")
+				return
+			}
+		case "backup_interval_mins":
+			parsed, err := strconv.Atoi(v)
+			if err != nil || parsed < 1 {
+				s.respondError(w, http.StatusBadRequest, "invalid backup_interval_mins: must be an integer >= 1")
+				return
+			}
+		case "backup_retention_all_days":
+			parsed, err := strconv.Atoi(v)
+			if err != nil || parsed < 0 {
+				s.respondError(w, http.StatusBadRequest, "invalid backup_retention_all_days: must be an integer >= 0")
+				return
+			}
+		case "backup_retention_daily_days":
+			parsed, err := strconv.Atoi(v)
+			if err != nil || parsed < 0 {
+				s.respondError(w, http.StatusBadRequest, "invalid backup_retention_daily_days: must be an integer >= 0")
+				return
+			}
+		case "auto_populate_env_name":
+			if v != "true" && v != "false" {
+				s.respondError(w, http.StatusBadRequest, "invalid auto_populate_env_name: must be 'true' or 'false'")
+				return
+			}
+		default:
+			s.respondError(w, http.StatusBadRequest, "unsupported settings key: "+k)
+			return
+		}
 	}
 
 	ctx := r.Context()

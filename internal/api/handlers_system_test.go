@@ -54,6 +54,107 @@ func TestSystemHandlers(t *testing.T) {
 		}
 	})
 
+	t.Run("PutSettings_Validation", func(t *testing.T) {
+		tests := []struct {
+			name           string
+			reqBody        map[string]string
+			expectedStatus int
+		}{
+			{
+				name: "invalid key",
+				reqBody: map[string]string{
+					"invalid_key_name": "some_value",
+				},
+				expectedStatus: http.StatusBadRequest,
+			},
+			{
+				name: "backup_target starts with dash",
+				reqBody: map[string]string{
+					"backup_target": " -some-flag",
+				},
+				expectedStatus: http.StatusBadRequest,
+			},
+			{
+				name: "backup_interval_mins invalid string",
+				reqBody: map[string]string{
+					"backup_interval_mins": "not-an-int",
+				},
+				expectedStatus: http.StatusBadRequest,
+			},
+			{
+				name: "backup_interval_mins less than 1",
+				reqBody: map[string]string{
+					"backup_interval_mins": "0",
+				},
+				expectedStatus: http.StatusBadRequest,
+			},
+			{
+				name: "backup_retention_all_days invalid string",
+				reqBody: map[string]string{
+					"backup_retention_all_days": "not-an-int",
+				},
+				expectedStatus: http.StatusBadRequest,
+			},
+			{
+				name: "backup_retention_all_days less than 0",
+				reqBody: map[string]string{
+					"backup_retention_all_days": "-1",
+				},
+				expectedStatus: http.StatusBadRequest,
+			},
+			{
+				name: "backup_retention_daily_days invalid string",
+				reqBody: map[string]string{
+					"backup_retention_daily_days": "not-an-int",
+				},
+				expectedStatus: http.StatusBadRequest,
+			},
+			{
+				name: "backup_retention_daily_days less than 0",
+				reqBody: map[string]string{
+					"backup_retention_daily_days": "-5",
+				},
+				expectedStatus: http.StatusBadRequest,
+			},
+			{
+				name: "auto_populate_env_name invalid value",
+				reqBody: map[string]string{
+					"auto_populate_env_name": "yes",
+				},
+				expectedStatus: http.StatusBadRequest,
+			},
+			{
+				name: "auto_populate_env_name valid true",
+				reqBody: map[string]string{
+					"auto_populate_env_name": "true",
+				},
+				expectedStatus: http.StatusOK,
+			},
+			{
+				name: "auto_populate_env_name valid false",
+				reqBody: map[string]string{
+					"auto_populate_env_name": "false",
+				},
+				expectedStatus: http.StatusOK,
+			},
+		}
+
+		for _, tc := range tests {
+			t.Run(tc.name, func(t *testing.T) {
+				body, _ := json.Marshal(tc.reqBody)
+				req := httptest.NewRequest("PUT", "/v1/system/settings", bytes.NewReader(body))
+				req.Header.Set("Authorization", "Bearer "+adminToken)
+				req.Header.Set("Content-Type", "application/json")
+				w := httptest.NewRecorder()
+				mux.ServeHTTP(w, req)
+
+				if w.Code != tc.expectedStatus {
+					t.Errorf("expected %d, got %d", tc.expectedStatus, w.Code)
+				}
+			})
+		}
+	})
+
 	t.Run("TriggerBackup_Success", func(t *testing.T) {
 		backupDir := t.TempDir()
 		ctx := context.Background()
