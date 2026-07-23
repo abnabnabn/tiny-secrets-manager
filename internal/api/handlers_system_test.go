@@ -54,6 +54,77 @@ func TestSystemHandlers(t *testing.T) {
 		}
 	})
 
+	t.Run("PutSettings_Validation_Failure", func(t *testing.T) {
+		invalidCases := []struct {
+			name    string
+			payload map[string]string
+		}{
+			{
+				name:    "unsupported key",
+				payload: map[string]string{"invalid_key": "some_value"},
+			},
+			{
+				name:    "backup_target starting with dash",
+				payload: map[string]string{"backup_target": "-oProxyCommand=touch/tmp/hacked"},
+			},
+			{
+				name:    "backup_interval_mins < 1",
+				payload: map[string]string{"backup_interval_mins": "0"},
+			},
+			{
+				name:    "backup_interval_mins non-integer",
+				payload: map[string]string{"backup_interval_mins": "invalid"},
+			},
+			{
+				name:    "backup_retention_all_days < 0",
+				payload: map[string]string{"backup_retention_all_days": "-1"},
+			},
+			{
+				name:    "backup_retention_daily_days < 0",
+				payload: map[string]string{"backup_retention_daily_days": "-5"},
+			},
+			{
+				name:    "auto_populate_env_name invalid boolean",
+				payload: map[string]string{"auto_populate_env_name": "yes"},
+			},
+		}
+
+		for _, tc := range invalidCases {
+			t.Run(tc.name, func(t *testing.T) {
+				body, _ := json.Marshal(tc.payload)
+				req := httptest.NewRequest("PUT", "/v1/system/settings", bytes.NewReader(body))
+				req.Header.Set("Authorization", "Bearer "+adminToken)
+				req.Header.Set("Content-Type", "application/json")
+				w := httptest.NewRecorder()
+				mux.ServeHTTP(w, req)
+
+				if w.Code != http.StatusBadRequest {
+					t.Errorf("expected 400 Bad Request, got %d for case: %s", w.Code, tc.name)
+				}
+			})
+		}
+	})
+
+	t.Run("PutSettings_Validation_Success", func(t *testing.T) {
+		payload := map[string]string{
+			"backup_target":               sharedTmpDir,
+			"backup_interval_mins":        "5",
+			"backup_retention_all_days":   "0",
+			"backup_retention_daily_days": "15",
+			"auto_populate_env_name":      "true",
+		}
+		body, _ := json.Marshal(payload)
+		req := httptest.NewRequest("PUT", "/v1/system/settings", bytes.NewReader(body))
+		req.Header.Set("Authorization", "Bearer "+adminToken)
+		req.Header.Set("Content-Type", "application/json")
+		w := httptest.NewRecorder()
+		mux.ServeHTTP(w, req)
+
+		if w.Code != http.StatusOK {
+			t.Errorf("expected 200 OK, got %d", w.Code)
+		}
+	})
+
 	t.Run("TriggerBackup_Success", func(t *testing.T) {
 		backupDir := t.TempDir()
 		ctx := context.Background()
