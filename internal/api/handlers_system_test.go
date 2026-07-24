@@ -54,6 +54,148 @@ func TestSystemHandlers(t *testing.T) {
 		}
 	})
 
+	t.Run("PutSettings_Validation_UnsupportedKey", func(t *testing.T) {
+		reqBody := map[string]string{
+			"random_unsupported_key": "some_value",
+		}
+		body, _ := json.Marshal(reqBody)
+		req := httptest.NewRequest("PUT", "/v1/system/settings", bytes.NewReader(body))
+		req.Header.Set("Authorization", "Bearer "+adminToken)
+		req.Header.Set("Content-Type", "application/json")
+		w := httptest.NewRecorder()
+		mux.ServeHTTP(w, req)
+
+		if w.Code != http.StatusBadRequest {
+			t.Errorf("expected 400 Bad Request, got %d", w.Code)
+		}
+	})
+
+	t.Run("PutSettings_Validation_BackupTarget_Invalid", func(t *testing.T) {
+		reqBody := map[string]string{
+			"backup_target": "-oProxyCommand=touch/tmp/hacked",
+		}
+		body, _ := json.Marshal(reqBody)
+		req := httptest.NewRequest("PUT", "/v1/system/settings", bytes.NewReader(body))
+		req.Header.Set("Authorization", "Bearer "+adminToken)
+		req.Header.Set("Content-Type", "application/json")
+		w := httptest.NewRecorder()
+		mux.ServeHTTP(w, req)
+
+		if w.Code != http.StatusBadRequest {
+			t.Errorf("expected 400 Bad Request, got %d", w.Code)
+		}
+	})
+
+	t.Run("PutSettings_Validation_BackupInterval_Invalid", func(t *testing.T) {
+		invalidValues := []string{"0", "-5", "not_an_integer"}
+		for _, val := range invalidValues {
+			reqBody := map[string]string{
+				"backup_interval_mins": val,
+			}
+			body, _ := json.Marshal(reqBody)
+			req := httptest.NewRequest("PUT", "/v1/system/settings", bytes.NewReader(body))
+			req.Header.Set("Authorization", "Bearer "+adminToken)
+			req.Header.Set("Content-Type", "application/json")
+			w := httptest.NewRecorder()
+			mux.ServeHTTP(w, req)
+
+			if w.Code != http.StatusBadRequest {
+				t.Errorf("value %s: expected 400 Bad Request, got %d", val, w.Code)
+			}
+		}
+	})
+
+	t.Run("PutSettings_Validation_RetentionAll_Invalid", func(t *testing.T) {
+		invalidValues := []string{"-1", "-100", "not_an_integer"}
+		for _, val := range invalidValues {
+			reqBody := map[string]string{
+				"backup_retention_all_days": val,
+			}
+			body, _ := json.Marshal(reqBody)
+			req := httptest.NewRequest("PUT", "/v1/system/settings", bytes.NewReader(body))
+			req.Header.Set("Authorization", "Bearer "+adminToken)
+			req.Header.Set("Content-Type", "application/json")
+			w := httptest.NewRecorder()
+			mux.ServeHTTP(w, req)
+
+			if w.Code != http.StatusBadRequest {
+				t.Errorf("value %s: expected 400 Bad Request, got %d", val, w.Code)
+			}
+		}
+	})
+
+	t.Run("PutSettings_Validation_RetentionDaily_Invalid", func(t *testing.T) {
+		invalidValues := []string{"-1", "-100", "not_an_integer"}
+		for _, val := range invalidValues {
+			reqBody := map[string]string{
+				"backup_retention_daily_days": val,
+			}
+			body, _ := json.Marshal(reqBody)
+			req := httptest.NewRequest("PUT", "/v1/system/settings", bytes.NewReader(body))
+			req.Header.Set("Authorization", "Bearer "+adminToken)
+			req.Header.Set("Content-Type", "application/json")
+			w := httptest.NewRecorder()
+			mux.ServeHTTP(w, req)
+
+			if w.Code != http.StatusBadRequest {
+				t.Errorf("value %s: expected 400 Bad Request, got %d", val, w.Code)
+			}
+		}
+	})
+
+	t.Run("PutSettings_Validation_AutoPopulateEnvName_Invalid", func(t *testing.T) {
+		invalidValues := []string{"yes", "no", "1", "0", "True", "False"}
+		for _, val := range invalidValues {
+			reqBody := map[string]string{
+				"auto_populate_env_name": val,
+			}
+			body, _ := json.Marshal(reqBody)
+			req := httptest.NewRequest("PUT", "/v1/system/settings", bytes.NewReader(body))
+			req.Header.Set("Authorization", "Bearer "+adminToken)
+			req.Header.Set("Content-Type", "application/json")
+			w := httptest.NewRecorder()
+			mux.ServeHTTP(w, req)
+
+			if w.Code != http.StatusBadRequest {
+				t.Errorf("value %s: expected 400 Bad Request, got %d", val, w.Code)
+			}
+		}
+	})
+
+	t.Run("PutSettings_AllValidValues_Success", func(t *testing.T) {
+		reqBody := map[string]string{
+			"backup_target":               sharedTmpDir,
+			"backup_interval_mins":        "15",
+			"backup_retention_all_days":   "5",
+			"backup_retention_daily_days": "14",
+			"auto_populate_env_name":      "true",
+		}
+		body, _ := json.Marshal(reqBody)
+		req := httptest.NewRequest("PUT", "/v1/system/settings", bytes.NewReader(body))
+		req.Header.Set("Authorization", "Bearer "+adminToken)
+		req.Header.Set("Content-Type", "application/json")
+		w := httptest.NewRecorder()
+		mux.ServeHTTP(w, req)
+
+		if w.Code != http.StatusOK {
+			t.Errorf("expected 200, got %d", w.Code)
+		}
+
+		// Verify GET retrieves everything correctly
+		reqGet := httptest.NewRequest("GET", "/v1/system/settings", nil)
+		reqGet.Header.Set("Authorization", "Bearer "+adminToken)
+		wGet := httptest.NewRecorder()
+		mux.ServeHTTP(wGet, reqGet)
+
+		var res map[string]string
+		_ = json.Unmarshal(wGet.Body.Bytes(), &res)
+		for k, v := range reqBody {
+			if res[k] != v {
+				t.Errorf("expected setting %s to be %s, got %s", k, v, res[k])
+			}
+		}
+	})
+
 	t.Run("TriggerBackup_Success", func(t *testing.T) {
 		backupDir := t.TempDir()
 		ctx := context.Background()
