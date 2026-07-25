@@ -27,8 +27,11 @@ func TestSystemHandlers(t *testing.T) {
 
 	t.Run("PutSettings_Success", func(t *testing.T) {
 		reqBody := map[string]string{
-			"backup_target":        sharedTmpDir,
-			"backup_interval_mins": "10",
+			"backup_target":             sharedTmpDir,
+			"backup_interval_mins":      "10",
+			"backup_retention_all_days": "1",
+			"backup_retention_daily_days": "30",
+			"auto_populate_env_name":     "true",
 		}
 		body, _ := json.Marshal(reqBody)
 		req := httptest.NewRequest("PUT", "/v1/system/settings", bytes.NewReader(body))
@@ -51,6 +54,57 @@ func TestSystemHandlers(t *testing.T) {
 		_ = json.Unmarshal(wGet.Body.Bytes(), &res)
 		if res["backup_target"] == "" {
 			t.Errorf("expected backup_target to be set")
+		}
+	})
+
+	t.Run("PutSettings_ValidationFailures", func(t *testing.T) {
+		testCases := []struct {
+			name string
+			body map[string]string
+		}{
+			{
+				name: "invalid key",
+				body: map[string]string{"unsupported_key": "somevalue"},
+			},
+			{
+				name: "backup_target starts with dash",
+				body: map[string]string{"backup_target": "-invalid-path"},
+			},
+			{
+				name: "backup_interval_mins non-integer",
+				body: map[string]string{"backup_interval_mins": "abc"},
+			},
+			{
+				name: "backup_interval_mins less than 1",
+				body: map[string]string{"backup_interval_mins": "0"},
+			},
+			{
+				name: "backup_retention_all_days less than 0",
+				body: map[string]string{"backup_retention_all_days": "-1"},
+			},
+			{
+				name: "backup_retention_daily_days less than 0",
+				body: map[string]string{"backup_retention_daily_days": "-5"},
+			},
+			{
+				name: "auto_populate_env_name invalid boolean",
+				body: map[string]string{"auto_populate_env_name": "yes"},
+			},
+		}
+
+		for _, tc := range testCases {
+			t.Run(tc.name, func(t *testing.T) {
+				body, _ := json.Marshal(tc.body)
+				req := httptest.NewRequest("PUT", "/v1/system/settings", bytes.NewReader(body))
+				req.Header.Set("Authorization", "Bearer "+adminToken)
+				req.Header.Set("Content-Type", "application/json")
+				w := httptest.NewRecorder()
+				mux.ServeHTTP(w, req)
+
+				if w.Code != http.StatusBadRequest {
+					t.Errorf("[%s] expected 400 Bad Request, got %d", tc.name, w.Code)
+				}
+			})
 		}
 	})
 
