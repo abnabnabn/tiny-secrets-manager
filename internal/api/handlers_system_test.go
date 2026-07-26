@@ -54,6 +54,105 @@ func TestSystemHandlers(t *testing.T) {
 		}
 	})
 
+	t.Run("PutSettings_Validation", func(t *testing.T) {
+		tests := []struct {
+			name       string
+			payload    map[string]string
+			wantStatus int
+		}{
+			{
+				name:       "invalid setting key",
+				payload:    map[string]string{"invalid_key": "some_value"},
+				wantStatus: http.StatusBadRequest,
+			},
+			{
+				name:       "invalid backup_target starting with dash",
+				payload:    map[string]string{"backup_target": "-invalid-dash-start"},
+				wantStatus: http.StatusBadRequest,
+			},
+			{
+				name:       "valid backup_target not starting with dash",
+				payload:    map[string]string{"backup_target": "/var/backups"},
+				wantStatus: http.StatusOK,
+			},
+			{
+				name:       "invalid backup_interval_mins non-integer",
+				payload:    map[string]string{"backup_interval_mins": "not-an-int"},
+				wantStatus: http.StatusBadRequest,
+			},
+			{
+				name:       "invalid backup_interval_mins less than 1",
+				payload:    map[string]string{"backup_interval_mins": "0"},
+				wantStatus: http.StatusBadRequest,
+			},
+			{
+				name:       "valid backup_interval_mins >= 1",
+				payload:    map[string]string{"backup_interval_mins": "5"},
+				wantStatus: http.StatusOK,
+			},
+			{
+				name:       "invalid backup_retention_all_days non-integer",
+				payload:    map[string]string{"backup_retention_all_days": "not-an-int"},
+				wantStatus: http.StatusBadRequest,
+			},
+			{
+				name:       "invalid backup_retention_all_days negative",
+				payload:    map[string]string{"backup_retention_all_days": "-1"},
+				wantStatus: http.StatusBadRequest,
+			},
+			{
+				name:       "valid backup_retention_all_days >= 0",
+				payload:    map[string]string{"backup_retention_all_days": "0"},
+				wantStatus: http.StatusOK,
+			},
+			{
+				name:       "invalid backup_retention_daily_days non-integer",
+				payload:    map[string]string{"backup_retention_daily_days": "not-an-int"},
+				wantStatus: http.StatusBadRequest,
+			},
+			{
+				name:       "invalid backup_retention_daily_days negative",
+				payload:    map[string]string{"backup_retention_daily_days": "-5"},
+				wantStatus: http.StatusBadRequest,
+			},
+			{
+				name:       "valid backup_retention_daily_days >= 0",
+				payload:    map[string]string{"backup_retention_daily_days": "30"},
+				wantStatus: http.StatusOK,
+			},
+			{
+				name:       "invalid auto_populate_env_name not true/false",
+				payload:    map[string]string{"auto_populate_env_name": "yes"},
+				wantStatus: http.StatusBadRequest,
+			},
+			{
+				name:       "valid auto_populate_env_name true",
+				payload:    map[string]string{"auto_populate_env_name": "true"},
+				wantStatus: http.StatusOK,
+			},
+			{
+				name:       "valid auto_populate_env_name false",
+				payload:    map[string]string{"auto_populate_env_name": "false"},
+				wantStatus: http.StatusOK,
+			},
+		}
+
+		for _, tc := range tests {
+			t.Run(tc.name, func(t *testing.T) {
+				body, _ := json.Marshal(tc.payload)
+				req := httptest.NewRequest("PUT", "/v1/system/settings", bytes.NewReader(body))
+				req.Header.Set("Authorization", "Bearer "+adminToken)
+				req.Header.Set("Content-Type", "application/json")
+				w := httptest.NewRecorder()
+				mux.ServeHTTP(w, req)
+
+				if w.Code != tc.wantStatus {
+					t.Errorf("expected status %d, got %d", tc.wantStatus, w.Code)
+				}
+			})
+		}
+	})
+
 	t.Run("TriggerBackup_Success", func(t *testing.T) {
 		backupDir := t.TempDir()
 		ctx := context.Background()
