@@ -118,4 +118,84 @@ func TestSystemHandlers(t *testing.T) {
 			t.Errorf("expected 403 or 401, got %d", w.Code)
 		}
 	})
+
+	t.Run("PutSettings_Validation", func(t *testing.T) {
+		tests := []struct {
+			name       string
+			payload    map[string]string
+			expectCode int
+		}{
+			{
+				name:       "Invalid key ignored or rejected",
+				payload:    map[string]string{"unsupported_key": "some_value"},
+				expectCode: http.StatusBadRequest,
+			},
+			{
+				name:       "Backup target starting with dash rejected",
+				payload:    map[string]string{"backup_target": " -option_injection"},
+				expectCode: http.StatusBadRequest,
+			},
+			{
+				name:       "Backup interval mins non-integer rejected",
+				payload:    map[string]string{"backup_interval_mins": "abc"},
+				expectCode: http.StatusBadRequest,
+			},
+			{
+				name:       "Backup interval mins less than 1 rejected",
+				payload:    map[string]string{"backup_interval_mins": "0"},
+				expectCode: http.StatusBadRequest,
+			},
+			{
+				name:       "Backup retention all days non-integer rejected",
+				payload:    map[string]string{"backup_retention_all_days": "abc"},
+				expectCode: http.StatusBadRequest,
+			},
+			{
+				name:       "Backup retention all days less than 0 rejected",
+				payload:    map[string]string{"backup_retention_all_days": "-5"},
+				expectCode: http.StatusBadRequest,
+			},
+			{
+				name:       "Backup retention daily days non-integer rejected",
+				payload:    map[string]string{"backup_retention_daily_days": "abc"},
+				expectCode: http.StatusBadRequest,
+			},
+			{
+				name:       "Backup retention daily days less than 0 rejected",
+				payload:    map[string]string{"backup_retention_daily_days": "-1"},
+				expectCode: http.StatusBadRequest,
+			},
+			{
+				name:       "Auto populate env name non-boolean rejected",
+				payload:    map[string]string{"auto_populate_env_name": "yes"},
+				expectCode: http.StatusBadRequest,
+			},
+			{
+				name: "Valid settings accepted",
+				payload: map[string]string{
+					"backup_target":               sharedTmpDir,
+					"backup_interval_mins":        "15",
+					"backup_retention_all_days":   "2",
+					"backup_retention_daily_days":  "14",
+					"auto_populate_env_name":      "true",
+				},
+				expectCode: http.StatusOK,
+			},
+		}
+
+		for _, tc := range tests {
+			t.Run(tc.name, func(t *testing.T) {
+				body, _ := json.Marshal(tc.payload)
+				req := httptest.NewRequest("PUT", "/v1/system/settings", bytes.NewReader(body))
+				req.Header.Set("Authorization", "Bearer "+adminToken)
+				req.Header.Set("Content-Type", "application/json")
+				w := httptest.NewRecorder()
+				mux.ServeHTTP(w, req)
+
+				if w.Code != tc.expectCode {
+					t.Errorf("expected %d, got %d for case: %s", tc.expectCode, w.Code, tc.name)
+				}
+			})
+		}
+	})
 }
