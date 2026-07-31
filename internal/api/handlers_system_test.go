@@ -54,6 +54,113 @@ func TestSystemHandlers(t *testing.T) {
 		}
 	})
 
+	t.Run("PutSettings_ValidationFailures", func(t *testing.T) {
+		testCases := []struct {
+			name    string
+			payload map[string]string
+		}{
+			{
+				name:    "Unsupported key",
+				payload: map[string]string{"unsupported_key": "some_value"},
+			},
+			{
+				name:    "Backup target starting with dash",
+				payload: map[string]string{"backup_target": "-invalid-dir"},
+			},
+			{
+				name:    "Backup interval non-integer",
+				payload: map[string]string{"backup_interval_mins": "abc"},
+			},
+			{
+				name:    "Backup interval zero",
+				payload: map[string]string{"backup_interval_mins": "0"},
+			},
+			{
+				name:    "Backup interval negative",
+				payload: map[string]string{"backup_interval_mins": "-5"},
+			},
+			{
+				name:    "Backup retention all days non-integer",
+				payload: map[string]string{"backup_retention_all_days": "not-a-number"},
+			},
+			{
+				name:    "Backup retention all days negative",
+				payload: map[string]string{"backup_retention_all_days": "-1"},
+			},
+			{
+				name:    "Backup retention daily days non-integer",
+				payload: map[string]string{"backup_retention_daily_days": "not-a-number"},
+			},
+			{
+				name:    "Backup retention daily days negative",
+				payload: map[string]string{"backup_retention_daily_days": "-1"},
+			},
+			{
+				name:    "Auto populate env name invalid",
+				payload: map[string]string{"auto_populate_env_name": "yes"},
+			},
+		}
+
+		for _, tc := range testCases {
+			t.Run(tc.name, func(t *testing.T) {
+				body, _ := json.Marshal(tc.payload)
+				req := httptest.NewRequest("PUT", "/v1/system/settings", bytes.NewReader(body))
+				req.Header.Set("Authorization", "Bearer "+adminToken)
+				req.Header.Set("Content-Type", "application/json")
+				w := httptest.NewRecorder()
+				mux.ServeHTTP(w, req)
+
+				if w.Code != http.StatusBadRequest {
+					t.Errorf("expected 400 Bad Request for %q, got %d", tc.name, w.Code)
+				}
+			})
+		}
+	})
+
+	t.Run("PutSettings_ValidationSuccessAll", func(t *testing.T) {
+		reqBody := map[string]string{
+			"backup_target":               sharedTmpDir,
+			"backup_interval_mins":        "15",
+			"backup_retention_all_days":   "5",
+			"backup_retention_daily_days": "45",
+			"auto_populate_env_name":      "false",
+		}
+		body, _ := json.Marshal(reqBody)
+		req := httptest.NewRequest("PUT", "/v1/system/settings", bytes.NewReader(body))
+		req.Header.Set("Authorization", "Bearer "+adminToken)
+		req.Header.Set("Content-Type", "application/json")
+		w := httptest.NewRecorder()
+		mux.ServeHTTP(w, req)
+
+		if w.Code != http.StatusOK {
+			t.Errorf("expected 200, got %d", w.Code)
+		}
+
+		// Verify GET
+		reqGet := httptest.NewRequest("GET", "/v1/system/settings", nil)
+		reqGet.Header.Set("Authorization", "Bearer "+adminToken)
+		wGet := httptest.NewRecorder()
+		mux.ServeHTTP(wGet, reqGet)
+
+		var res map[string]string
+		_ = json.Unmarshal(wGet.Body.Bytes(), &res)
+		if res["backup_target"] != sharedTmpDir {
+			t.Errorf("expected backup_target %s, got %s", sharedTmpDir, res["backup_target"])
+		}
+		if res["backup_interval_mins"] != "15" {
+			t.Errorf("expected backup_interval_mins 15, got %s", res["backup_interval_mins"])
+		}
+		if res["backup_retention_all_days"] != "5" {
+			t.Errorf("expected backup_retention_all_days 5, got %s", res["backup_retention_all_days"])
+		}
+		if res["backup_retention_daily_days"] != "45" {
+			t.Errorf("expected backup_retention_daily_days 45, got %s", res["backup_retention_daily_days"])
+		}
+		if res["auto_populate_env_name"] != "false" {
+			t.Errorf("expected auto_populate_env_name false, got %s", res["auto_populate_env_name"])
+		}
+	})
+
 	t.Run("TriggerBackup_Success", func(t *testing.T) {
 		backupDir := t.TempDir()
 		ctx := context.Background()
