@@ -54,6 +54,97 @@ func TestSystemHandlers(t *testing.T) {
 		}
 	})
 
+	t.Run("PutSettings_Validation", func(t *testing.T) {
+		tests := []struct {
+			name       string
+			payload    map[string]string
+			expectCode int
+		}{
+			{
+				name: "Invalid Key Rejected",
+				payload: map[string]string{
+					"malicious_key": "some_value",
+				},
+				expectCode: http.StatusBadRequest,
+			},
+			{
+				name: "Backup Target Starts With Dash Rejected",
+				payload: map[string]string{
+					"backup_target": "-invalid-path",
+				},
+				expectCode: http.StatusBadRequest,
+			},
+			{
+				name: "Backup Interval Mins Not Integer Rejected",
+				payload: map[string]string{
+					"backup_interval_mins": "not-an-int",
+				},
+				expectCode: http.StatusBadRequest,
+			},
+			{
+				name: "Backup Interval Mins Less Than One Rejected",
+				payload: map[string]string{
+					"backup_interval_mins": "0",
+				},
+				expectCode: http.StatusBadRequest,
+			},
+			{
+				name: "Backup Retention All Days Negative Rejected",
+				payload: map[string]string{
+					"backup_retention_all_days": "-5",
+				},
+				expectCode: http.StatusBadRequest,
+			},
+			{
+				name: "Backup Retention All Days Not Integer Rejected",
+				payload: map[string]string{
+					"backup_retention_all_days": "abc",
+				},
+				expectCode: http.StatusBadRequest,
+			},
+			{
+				name: "Backup Retention Daily Days Negative Rejected",
+				payload: map[string]string{
+					"backup_retention_daily_days": "-1",
+				},
+				expectCode: http.StatusBadRequest,
+			},
+			{
+				name: "Auto Populate Env Name Invalid Value Rejected",
+				payload: map[string]string{
+					"auto_populate_env_name": "yes",
+				},
+				expectCode: http.StatusBadRequest,
+			},
+			{
+				name: "Valid Values Accepted",
+				payload: map[string]string{
+					"backup_target":               sharedTmpDir,
+					"backup_interval_mins":        "15",
+					"backup_retention_all_days":   "0",
+					"backup_retention_daily_days": "30",
+					"auto_populate_env_name":      "true",
+				},
+				expectCode: http.StatusOK,
+			},
+		}
+
+		for _, tc := range tests {
+			t.Run(tc.name, func(t *testing.T) {
+				body, _ := json.Marshal(tc.payload)
+				req := httptest.NewRequest("PUT", "/v1/system/settings", bytes.NewReader(body))
+				req.Header.Set("Authorization", "Bearer "+adminToken)
+				req.Header.Set("Content-Type", "application/json")
+				w := httptest.NewRecorder()
+				mux.ServeHTTP(w, req)
+
+				if w.Code != tc.expectCode {
+					t.Errorf("expected %d, got %d", tc.expectCode, w.Code)
+				}
+			})
+		}
+	})
+
 	t.Run("TriggerBackup_Success", func(t *testing.T) {
 		backupDir := t.TempDir()
 		ctx := context.Background()
