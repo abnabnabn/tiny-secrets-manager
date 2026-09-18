@@ -112,7 +112,7 @@ run-env: build-server
 	export TSM_DB_PATH="tsm.db" && \
 	$(BINARY)
 
-test:
+test: vulncheck
 	@echo "Running tests with coverage and summary..."
 	go run gotest.tools/gotestsum@latest --format pkgname -- -race -coverprofile=coverage.out -coverpkg=./internal/...,./cmd/tsm-cli/... ./...
 	@echo ""
