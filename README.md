@@ -37,6 +37,8 @@ We have comprehensive guides depending on what you are trying to do:
   Full reference for the `tsm` command-line tool, including how to authenticate, manage roles, manually retrieve secrets, and use `tsm run` to automatically inject secrets into your applications.
 * **[Ansible Plugin Setup Guide](docs/ansible-plugin.md)**
   Instructions for installing and using the built-in Ansible lookup plugin (`tsm.py`) to fetch secrets directly within your playbooks.
+* **[Developer & Release Guide](docs/developer-guide.md)**
+  Complete architectural overview, zero-Node frontend prebuild pipeline, test workflows, and step-by-step release procedures.
 
 ## Quick Start (Docker)
 
