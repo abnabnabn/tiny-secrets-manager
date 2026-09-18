@@ -3,6 +3,8 @@ package api
 import (
 	"encoding/json"
 	"net/http"
+	"strconv"
+	"strings"
 )
 
 func (s *Server) handleGetSettings(w http.ResponseWriter, r *http.Request) {
@@ -36,13 +38,51 @@ func (s *Server) handlePutSettings(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	ctx := r.Context()
+	// 1. Strict input boundary validation of keys and values
 	for k, v := range req {
-		if err := s.store.PutSetting(ctx, k, v); err != nil {
-			s.logger.Error("failed to update setting", "err", err)
-			s.respondError(w, http.StatusInternalServerError, "internal server error")
+		switch k {
+		case "backup_target":
+			trimmed := strings.TrimSpace(v)
+			if strings.HasPrefix(trimmed, "-") {
+				s.respondError(w, http.StatusBadRequest, "invalid backup target: cannot start with a dash")
+				return
+			}
+			req[k] = trimmed
+		case "backup_interval_mins":
+			val, err := strconv.Atoi(v)
+			if err != nil || val < 1 {
+				s.respondError(w, http.StatusBadRequest, "invalid backup interval: must be an integer >= 1")
+				return
+			}
+		case "backup_retention_all_days":
+			val, err := strconv.Atoi(v)
+			if err != nil || val < 0 {
+				s.respondError(w, http.StatusBadRequest, "invalid retention all days: must be an integer >= 0")
+				return
+			}
+		case "backup_retention_daily_days":
+			val, err := strconv.Atoi(v)
+			if err != nil || val < 0 {
+				s.respondError(w, http.StatusBadRequest, "invalid retention daily days: must be an integer >= 0")
+				return
+			}
+		case "auto_populate_env_name":
+			if v != "true" && v != "false" {
+				s.respondError(w, http.StatusBadRequest, "invalid auto_populate_env_name: must be 'true' or 'false'")
+				return
+			}
+		default:
+			s.respondError(w, http.StatusBadRequest, "invalid setting key: "+k)
 			return
 		}
+	}
+
+	// 2. Perform updates after successful validation of all inputs via atomic transaction batch
+	ctx := r.Context()
+	if err := s.store.PutSettings(ctx, req); err != nil {
+		s.logger.Error("failed to update settings", "err", err)
+		s.respondError(w, http.StatusInternalServerError, "internal server error")
+		return
 	}
 
 	w.WriteHeader(http.StatusOK)

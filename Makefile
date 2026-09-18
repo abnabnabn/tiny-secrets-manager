@@ -1,9 +1,9 @@
-.PHONY: help all build build-server build-cli build-all run test clean tidy setup run-env install uninstall dev-link dev-unlink lint fmt vulncheck redeploy setup-backup-dir
+.PHONY: help all build build-server build-cli build-all run test clean tidy setup run-env install uninstall dev-link dev-unlink lint fmt vulncheck redeploy setup-backup-dir check-not-root
 
 BIN_DIR := bin
-HOST_OS := $(shell go env GOOS)
-HOST_ARCH := $(shell go env GOARCH)
-HOST_PLATFORM := $(HOST_OS)-$(HOST_ARCH)
+HOST_OS = $(shell go env GOOS)
+HOST_ARCH = $(shell go env GOARCH)
+HOST_PLATFORM = $(HOST_OS)-$(HOST_ARCH)
 BINARY := $(BIN_DIR)/tiny-secrets-manager
 CLI_BINARY := $(BIN_DIR)/tsm
 MAIN_PKG := ./cmd/tsm-server
@@ -114,7 +114,7 @@ run-env: build-server
 
 test:
 	@echo "Running tests with coverage and summary..."
-	go run gotest.tools/gotestsum@latest --format pkgname -- -race -coverprofile=coverage.out ./...
+	go run gotest.tools/gotestsum@latest --format pkgname -- -race -coverprofile=coverage.out -coverpkg=./internal/...,./cmd/tsm-cli/... ./...
 	@echo ""
 	@echo "========================================================================"
 	@echo "                        COVERAGE SUMMARY                                "
@@ -209,7 +209,17 @@ uninstall:
 		echo "Cleanup complete. Systemd service, data directories, and user have been removed."; \
 	fi
 
-redeploy: build test
+check-not-root:
+	@if [ "$$(id -u)" = "0" ]; then \
+		echo ""; \
+		echo "Error: Do not run 'sudo make redeploy'."; \
+		echo "       This target calls sudo internally for the install step only."; \
+		echo "       Run as your normal user: make redeploy"; \
+		echo ""; \
+		exit 1; \
+	fi
+
+redeploy: check-not-root build test
 	@echo "Redeploying service..."
 	@if command -v systemctl >/dev/null 2>&1; then \
 		echo "Stopping tiny-secrets-manager..."; \

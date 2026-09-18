@@ -7,12 +7,15 @@ export default function App() {
     const [identity, setIdentity] = useState(null);
     const [error, setError] = useState('');
     const [isChecking, setIsChecking] = useState(true);
+    const [version, setVersion] = useState('');
 
     const checkAuth = async () => {
         try {
             const res = await fetch(`${API_BASE}/v1/auth/me`, fetchConfig);
-            if (res.ok) setIdentity(await res.json());
-            else setIdentity(null);
+            if (res.ok) {
+                setIdentity(await res.json());
+                setVersion(res.headers.get('X-TSM-Version') || '');
+            } else setIdentity(null);
         } catch (err) {
             console.error('Auth check failed:', err);
             setIdentity(null);
@@ -55,6 +58,7 @@ export default function App() {
                     <p className="text-sm text-gray-400">Authenticated as: <span className="text-blue-400">{identity.name}</span> {identity.is_admin ? '(Admin)' : ''}</p>
                 </div>
                 <div className="flex items-center gap-6">
+                    {version && <span className="text-xs text-gray-600 font-mono">{version}</span>}
                     <a 
                         href="https://github.com/abnabnabn/tiny-secrets-manager" 
                         target="_blank" 

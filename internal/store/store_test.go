@@ -373,3 +373,73 @@ func TestStore_ExtendRoleExpiry(t *testing.T) {
 	assert.NotNil(t, rUpdated.ExpiresAt)
 	assert.True(t, rUpdated.ExpiresAt.Equal(newExpiry))
 }
+
+func TestStore_Settings(t *testing.T) {
+	st := newTestStore(t)
+	defer st.Close()
+	ctx := context.Background()
+
+	// 1. Check setting that doesn't exist
+	val, err := st.GetSetting(ctx, "non_existent")
+	require.NoError(t, err)
+	assert.Empty(t, val)
+
+	// 2. Put setting and verify
+	err = st.PutSetting(ctx, "site_name", "Tiny Secrets Manager")
+	require.NoError(t, err)
+
+	val, err = st.GetSetting(ctx, "site_name")
+	require.NoError(t, err)
+	assert.Equal(t, "Tiny Secrets Manager", val)
+
+	// 3. Put another setting and verify
+	err = st.PutSetting(ctx, "session_timeout", "3600")
+	require.NoError(t, err)
+
+	val, err = st.GetSetting(ctx, "session_timeout")
+	require.NoError(t, err)
+	assert.Equal(t, "3600", val)
+
+	// 4. Test GetAllSettings
+	settings, err := st.GetAllSettings(ctx)
+	require.NoError(t, err)
+	assert.Len(t, settings, 2)
+	assert.Equal(t, "Tiny Secrets Manager", settings["site_name"])
+	assert.Equal(t, "3600", settings["session_timeout"])
+
+	// 5. Update existing setting and verify
+	err = st.PutSetting(ctx, "site_name", "Tiny Secrets Manager - Updated")
+	require.NoError(t, err)
+
+	val, err = st.GetSetting(ctx, "site_name")
+	require.NoError(t, err)
+	assert.Equal(t, "Tiny Secrets Manager - Updated", val)
+
+	settings, err = st.GetAllSettings(ctx)
+	require.NoError(t, err)
+	assert.Len(t, settings, 2)
+	assert.Equal(t, "Tiny Secrets Manager - Updated", settings["site_name"])
+}
+
+func TestStore_PutSettings(t *testing.T) {
+	st := newTestStore(t)
+	defer st.Close()
+	ctx := context.Background()
+
+	// 1. Put settings bulk
+	settings := map[string]string{
+		"bulk_k1": "bulk_v1",
+		"bulk_k2": "bulk_v2",
+	}
+	err := st.PutSettings(ctx, settings)
+	require.NoError(t, err)
+
+	// 2. Verify
+	v1, err := st.GetSetting(ctx, "bulk_k1")
+	require.NoError(t, err)
+	assert.Equal(t, "bulk_v1", v1)
+
+	v2, err := st.GetSetting(ctx, "bulk_k2")
+	require.NoError(t, err)
+	assert.Equal(t, "bulk_v2", v2)
+}

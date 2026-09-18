@@ -2,10 +2,6 @@ package main
 
 import (
 	"context"
-	"crypto/rand"
-	"crypto/sha256"
-	"encoding/base64"
-	"encoding/json"
 	"flag"
 	"fmt"
 	"log/slog"
@@ -17,6 +13,7 @@ import (
 
 	"tiny-secrets-manager/internal/api"
 	"tiny-secrets-manager/internal/config"
+	"tiny-secrets-manager/internal/server"
 	"tiny-secrets-manager/internal/store"
 	"tiny-secrets-manager/public"
 
@@ -24,43 +21,6 @@ import (
 )
 
 var Version = "dev"
-
-func generateRandomString(n int) string {
-	b := make([]byte, n)
-	_, _ = rand.Read(b)
-	return base64.RawURLEncoding.EncodeToString(b)
-}
-
-func bootstrap(logger *slog.Logger, configPath string) (*config.Config, error) {
-	if configPath == "" {
-		configPath = "config.json"
-	}
-
-	// 1. Check if we have an existing config
-	if _, err := os.Stat(configPath); err == nil {
-		return config.Load(configPath)
-	}
-
-	// 2. No config found - Auto-generate infrastructure
-	logger.Info("no configuration found, initiating self-bootstrap...")
-
-	mKey := make([]byte, 32)
-	_, _ = rand.Read(mKey)
-
-	cfg := &config.Config{
-		MasterKey: base64.StdEncoding.EncodeToString(mKey),
-		Listen:    "0.0.0.0:8090",
-		DBPath:    "tsm.db",
-	}
-
-	out, _ := json.MarshalIndent(cfg, "", "  ")
-	if err := os.WriteFile(configPath, out, 0600); err != nil {
-		return nil, fmt.Errorf("failed to write config: %w", err)
-	}
-
-	logger.Info("infrastructure configuration generated", "path", configPath)
-	return config.Load(configPath)
-}
 
 func main() {
 	if len(os.Args) >= 3 && os.Args[1] == "--hash" {
@@ -108,7 +68,7 @@ func main() {
 	var cfg *config.Config
 	var err error
 
-	cfg, err = bootstrap(logger, configPath)
+	cfg, err = server.Bootstrap(logger, configPath)
 
 	if err != nil {
 		logger.Error("failed to load config", "err", err)
@@ -140,7 +100,7 @@ func main() {
 	}
 	defer db.Close()
 
-	if err := seedAdminUser(context.Background(), db, adminUserFlag, adminPassFlag, adminTokenFlag); err != nil {
+	if err := server.SeedAdminUser(context.Background(), db, adminUserFlag, adminPassFlag, adminTokenFlag); err != nil {
 		logger.Error("failed to seed admin user", "err", err)
 		os.Exit(1)
 	}
@@ -163,68 +123,6 @@ func main() {
 		logger.Error("server error", "err", err)
 		os.Exit(1)
 	}
-}
-
-func seedAdminUser(ctx context.Context, db *store.Store, adminUser, adminPass, adminToken string) error {
-	adminCount, err := db.CountAdmins(ctx)
-	if err != nil {
-		return fmt.Errorf("failed to count admins: %w", err)
-	}
-	if adminCount > 0 {
-		return nil
-	}
-
-	user := adminUser
-	if user == "" {
-		user = os.Getenv("TSM_ADMIN_USER")
-	}
-	if user == "" {
-		user = "admin"
-	}
-
-	pass := adminPass
-	if pass == "" {
-		pass = os.Getenv("TSM_ADMIN_PASS")
-	}
-	if pass == "" {
-		pass = generateRandomString(12)
-	}
-
-	token := adminToken
-	if token == "" {
-		token = os.Getenv("TSM_ADMIN_TOKEN")
-	}
-	if token == "" {
-		token = generateRandomString(32)
-	}
-
-	hash, err := bcrypt.GenerateFromPassword([]byte(pass), 14)
-	if err != nil {
-		return fmt.Errorf("failed to hash password: %w", err)
-	}
-
-	if err := db.PutAdmin(ctx, user, string(hash)); err != nil {
-		return fmt.Errorf("failed to create admin: %w", err)
-	}
-
-	tokenHash := sha256.Sum256([]byte(token))
-	pJSON, _ := json.Marshal([]config.Policy{{Prefix: "*", Methods: []string{"*"}}})
-	if err := db.PutRole(ctx, "admin", tokenHash[:], pJSON, true, false, nil); err != nil {
-		return fmt.Errorf("failed to create admin role: %w", err)
-	}
-
-	fmt.Println("\n" + `========================================================================`)
-	fmt.Println(`                        INITIAL SETUP COMPLETE                          `)
-	fmt.Println(`========================================================================`)
-	fmt.Printf("  Username: %s\n", user)
-	fmt.Printf("  Password: %s\n", pass)
-	fmt.Printf("  Admin API Token: %s\n", token)
-	fmt.Println("")
-	fmt.Println(`  [IMPORTANT] These credentials have been seeded into the database.`)
-	fmt.Println(`              This is the ONLY time the password and token will be shown.`)
-	fmt.Println(`========================================================================`)
-
-	return nil
 }
 
 func runServer(cfg *config.Config, db *store.Store, logger *slog.Logger) error {

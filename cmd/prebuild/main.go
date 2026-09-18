@@ -142,7 +142,7 @@ export const createRoot = window.ReactDOM.createRoot;
 		}
 
 		// #nosec G204 - Build script explicitly runs go build
-		cmd := exec.Command("go", "build", "-ldflags="+ldflags, "-trimpath", "-o", out, "./cmd/tsm-cli")
+		cmd := exec.Command("go", "build", "-buildvcs=false", "-ldflags="+ldflags, "-trimpath", "-o", out, "./cmd/tsm-cli")
 		cmd.Env = append(os.Environ(), "GOOS="+t.OS, "GOARCH="+t.Arch, "CGO_ENABLED=0")
 		cmd.Stdout = os.Stdout
 		cmd.Stderr = os.Stderr

@@ -1,5 +1,6 @@
 # Binaries
 bin/
+*.exe
 
 # Configurations with secrets
 config.json

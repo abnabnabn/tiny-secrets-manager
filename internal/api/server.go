@@ -34,6 +34,7 @@ type Storage interface {
 	RegenerateRecoveryKeys(ctx context.Context) ([]string, error)
 	GetAllSettings(ctx context.Context) (map[string]string, error)
 	PutSetting(ctx context.Context, key, value string) error
+	PutSettings(ctx context.Context, settings map[string]string) error
 	GetSetting(ctx context.Context, key string) (string, error)
 	Backup(ctx context.Context, dst string) error
 	DeleteExpiredRoles(ctx context.Context) (int64, error)
