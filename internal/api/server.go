@@ -298,7 +298,10 @@ func (s *Server) auth(next http.HandlerFunc) http.HandlerFunc {
 					client.Name = tr.Name
 					client.CanCreate = tr.CanCreate
 					_ = json.Unmarshal(tr.Policies, &client.Policies)
-				} else if err != sql.ErrNoRows {
+				} else if err == sql.ErrNoRows {
+					s.respondError(w, http.StatusBadRequest, "impersonated role not found")
+					return
+				} else {
 					s.logger.Error("token lookup for impersonation failed", "err", err)
 					s.respondError(w, http.StatusInternalServerError, "internal server error")
 					return

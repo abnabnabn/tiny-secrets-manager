@@ -8,3 +8,8 @@
 **Vulnerability:** The settings storage of the application was vulnerable to mass-assignment/arbitrary key creation via `handlePutSettings`. Furthermore, malformed values like negative integers or dash-prefixed paths were only checked down the line in background daemons/backup execution instead of at the REST input boundary.
 **Learning:** Input validation should always be applied as early as possible, ideally at the first entrypoint / HTTP API boundary. Trusting later daemon components to check values can cause unexpected application states, database pollution, or deferred errors.
 **Prevention:** Maintain a strict allowlist of recognized settings keys, and perform type/boundary validation on each value (e.g. integer range check, boolean parsing, and prefix verification) before writing to the persistent database.
+
+## 2026-07-21 - Fail-Open Impersonation Error Handling
+**Vulnerability:** The authentication middleware supported an `X-Impersonate-Token` header for admin requests. When an admin supplied a non-existent role name, the database lookup returned `sql.ErrNoRows`, but the error was silently ignored and processing fell through without dropping admin privileges.
+**Learning:** Auth middleware that attempts optional privilege-dropping must strictly reject requests when the requested target context is invalid or missing, rather than falling through and retaining higher privileges.
+**Prevention:** Always fail securely by returning an explicit HTTP error (e.g., 400 Bad Request) when an impersonation target cannot be found.
