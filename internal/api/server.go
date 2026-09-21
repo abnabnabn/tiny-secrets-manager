@@ -157,12 +157,19 @@ func (s *Server) RegisterRoutes(mux *http.ServeMux) {
 
 var variableRegex = regexp.MustCompile(`\$\{([^}]+)\}`)
 
+const maxResolveDepth = 10
+
 // resolveVariables parses text for ${key} patterns and replaces them with their
 // corresponding secret values, provided the client has GET permission for them.
-// A visited map is used to prevent infinite recursive resolution in case of circular references.
+// A visited map is used to prevent infinite recursive resolution in case of circular references
+// or stack exhaustion/exponential expansion Denial of Service via deeply nested variables.
 func (s *Server) resolveVariables(ctx context.Context, client Client, text string, visited map[string]bool) string {
 	if visited == nil {
 		visited = make(map[string]bool)
+	}
+
+	if len(visited) >= maxResolveDepth {
+		return text // Cap recursion depth to prevent stack overflow and exponential expansion DoS
 	}
 
 	return variableRegex.ReplaceAllStringFunc(text, func(match string) string {

@@ -5,6 +5,7 @@ import (
 	"context"
 	"crypto/sha256"
 	"encoding/json"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"testing"
@@ -266,5 +267,33 @@ func TestHandleResolveSecret(t *testing.T) {
 		assert.Equal(t, "circle1", resp["key"])
 		// Should break the cycle safely and leave the unresolved variable
 		assert.Equal(t, "${circle2}", resp["value"])
+	})
+
+	// 6. Test deep nesting recursion depth limit
+	for i := 0; i < 14; i++ {
+		key := fmt.Sprintf("depth%d", i)
+		nextKey := fmt.Sprintf("depth%d", i+1)
+		err := db.Put(context.Background(), key, []byte(fmt.Sprintf("${%s}", nextKey)))
+		require.NoError(t, err)
+	}
+	err = db.Put(context.Background(), "depth14", []byte("final_value"))
+	require.NoError(t, err)
+
+	t.Run("get_secret_max_recursion_depth", func(t *testing.T) {
+		req := httptest.NewRequest("GET", "/v1/secrets/depth0", nil)
+		req.Header.Set("Authorization", "Bearer "+adminToken)
+		rec := httptest.NewRecorder()
+		mux.ServeHTTP(rec, req)
+
+		assert.Equal(t, http.StatusOK, rec.Code)
+
+		var resp map[string]string
+		err := json.NewDecoder(rec.Body).Decode(&resp)
+		require.NoError(t, err)
+		assert.Equal(t, "depth0", resp["key"])
+		// Should stop resolving when maxResolveDepth (10) is reached
+		assert.NotEmpty(t, resp["value"])
+		assert.NotEqual(t, "final_value", resp["value"])
+		assert.Equal(t, "${depth11}", resp["value"])
 	})
 }
