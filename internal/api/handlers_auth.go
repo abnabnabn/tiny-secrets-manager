@@ -9,6 +9,7 @@ import (
 	"encoding/json"
 	"net/http"
 	"strconv"
+	"strings"
 	"time"
 
 	"golang.org/x/crypto/bcrypt"
@@ -76,6 +77,27 @@ func (s *Server) handleLogin(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) handleLogout(w http.ResponseWriter, r *http.Request) {
+	var tokenStr string
+	if cookie, err := r.Cookie("tsm_admin"); err == nil {
+		tokenStr = cookie.Value
+	} else if h := r.Header.Get("Authorization"); strings.HasPrefix(h, "Bearer ") {
+		tokenStr = strings.TrimPrefix(h, "Bearer ")
+	}
+
+	if tokenStr != "" {
+		tokenHash := sha256.Sum256([]byte(tokenStr))
+		ctx, cancel := context.WithTimeout(r.Context(), dbTimeout)
+		defer cancel()
+
+		if tr, err := s.store.GetRoleByHash(ctx, tokenHash[:]); err == nil {
+			if strings.HasPrefix(tr.Name, "session_") {
+				if err := s.store.DeleteRole(ctx, tr.Name); err != nil {
+					s.logger.Error("failed to revoke session role on logout", "err", err)
+				}
+			}
+		}
+	}
+
 	// #nosec G124 - Secure and SameSite are evaluated dynamically based on config
 	http.SetCookie(w, &http.Cookie{
 		Name:     "tsm_admin",
