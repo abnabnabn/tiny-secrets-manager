@@ -53,6 +53,36 @@ func TestHandleLogin(t *testing.T) {
 	})
 }
 
+func TestHandleLogin_RateLimit(t *testing.T) {
+	_, db, mux, _ := setupTestServer(t)
+	defer db.Close()
+
+	body := map[string]string{
+		"username": "admin",
+		"password": "wrongpassword",
+	}
+	b, _ := json.Marshal(body)
+
+	ip := "192.0.2.1:12345"
+
+	// First 5 requests should get 401 Unauthorized
+	for i := 0; i < 5; i++ {
+		req := httptest.NewRequest("POST", "/v1/auth/login", bytes.NewBuffer(b))
+		req.RemoteAddr = ip
+		rec := httptest.NewRecorder()
+		mux.ServeHTTP(rec, req)
+		assert.Equal(t, http.StatusUnauthorized, rec.Code)
+	}
+
+	// 6th request should be rate limited with 429 Too Many Requests
+	req := httptest.NewRequest("POST", "/v1/auth/login", bytes.NewBuffer(b))
+	req.RemoteAddr = ip
+	rec := httptest.NewRecorder()
+	mux.ServeHTTP(rec, req)
+
+	assert.Equal(t, http.StatusTooManyRequests, rec.Code)
+}
+
 func TestHandleLogout(t *testing.T) {
 	_, db, mux, _ := setupTestServer(t)
 	defer db.Close()

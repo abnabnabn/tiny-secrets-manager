@@ -11,11 +11,68 @@ import (
 	"net/http"
 	"regexp"
 	"strings"
+	"sync"
 	"time"
 
 	"tiny-secrets-manager/internal/config"
 	"tiny-secrets-manager/internal/store"
 )
+
+type rateLimiter struct {
+	mu          sync.Mutex
+	attempts    map[string][]time.Time
+	lastCleanup time.Time
+}
+
+func newRateLimiter() *rateLimiter {
+	return &rateLimiter{
+		attempts:    make(map[string][]time.Time),
+		lastCleanup: time.Now(),
+	}
+}
+
+func (rl *rateLimiter) allow(ip string, limit int, window time.Duration) bool {
+	rl.mu.Lock()
+	defer rl.mu.Unlock()
+
+	now := time.Now()
+	cutoff := now.Add(-window)
+
+	// Periodic sweep of expired attempts to prevent unbounded map growth
+	if time.Since(rl.lastCleanup) > 5*time.Minute || len(rl.attempts) > 1000 {
+		for k, ts := range rl.attempts {
+			var active []time.Time
+			for _, t := range ts {
+				if t.After(cutoff) {
+					active = append(active, t)
+				}
+			}
+			if len(active) == 0 {
+				delete(rl.attempts, k)
+			} else {
+				rl.attempts[k] = active
+			}
+		}
+		rl.lastCleanup = now
+	}
+
+	timestamps := rl.attempts[ip]
+	var valid []time.Time
+	for _, t := range timestamps {
+		if t.After(cutoff) {
+			valid = append(valid, t)
+		}
+	}
+
+	if len(valid) >= limit {
+		rl.attempts[ip] = valid
+		return false
+	}
+
+	valid = append(valid, now)
+	rl.attempts[ip] = valid
+	return true
+}
 
 // Storage defines the interface for the backend storage engine, enabling dependency injection.
 type Storage interface {
@@ -95,6 +152,7 @@ type Server struct {
 	logger        *slog.Logger
 	version       string
 	backupTrigger chan struct{}
+	loginLimiter  *rateLimiter
 }
 
 // NewServer initializes a new API server instance.
@@ -105,6 +163,7 @@ func NewServer(s Storage, cfg *config.Config, logger *slog.Logger, version strin
 		logger:        logger,
 		version:       version,
 		backupTrigger: make(chan struct{}, 1),
+		loginLimiter:  newRateLimiter(),
 	}
 	go srv.backupLoop()
 	return srv

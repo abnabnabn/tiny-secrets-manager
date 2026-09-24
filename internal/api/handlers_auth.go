@@ -7,6 +7,7 @@ import (
 	"database/sql"
 	"encoding/base64"
 	"encoding/json"
+	"net"
 	"net/http"
 	"strconv"
 	"time"
@@ -14,7 +15,21 @@ import (
 	"golang.org/x/crypto/bcrypt"
 )
 
+func clientIP(r *http.Request) string {
+	host, _, err := net.SplitHostPort(r.RemoteAddr)
+	if err != nil {
+		return r.RemoteAddr
+	}
+	return host
+}
+
 func (s *Server) handleLogin(w http.ResponseWriter, r *http.Request) {
+	ip := clientIP(r)
+	if !s.loginLimiter.allow(ip, 5, 1*time.Minute) {
+		s.respondError(w, http.StatusTooManyRequests, "too many login attempts")
+		return
+	}
+
 	r.Body = http.MaxBytesReader(w, r.Body, maxPayloadBytes)
 	var req struct {
 		Username string `json:"username"`
