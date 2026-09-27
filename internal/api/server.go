@@ -293,16 +293,18 @@ func (s *Server) auth(next http.HandlerFunc) http.HandlerFunc {
 		if client.IsAdmin {
 			if impersonate := r.Header.Get("X-Impersonate-Token"); impersonate != "" {
 				tr, err := s.store.GetRoleByName(ctx, impersonate)
-				if err == nil {
-					client.IsAdmin = false
-					client.Name = tr.Name
-					client.CanCreate = tr.CanCreate
-					_ = json.Unmarshal(tr.Policies, &client.Policies)
-				} else if err != sql.ErrNoRows {
+				if err == sql.ErrNoRows {
+					s.respondError(w, http.StatusBadRequest, "impersonated role not found")
+					return
+				} else if err != nil {
 					s.logger.Error("token lookup for impersonation failed", "err", err)
 					s.respondError(w, http.StatusInternalServerError, "internal server error")
 					return
 				}
+				client.IsAdmin = false
+				client.Name = tr.Name
+				client.CanCreate = tr.CanCreate
+				_ = json.Unmarshal(tr.Policies, &client.Policies)
 			}
 		}
 

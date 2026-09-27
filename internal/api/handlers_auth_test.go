@@ -205,4 +205,19 @@ func TestHandleAuthMe(t *testing.T) {
 		require.Len(t, client.Policies, 1)
 		assert.Equal(t, "app.*", client.Policies[0].Prefix)
 	})
+
+	t.Run("impersonation_non_existent_role_bad_request", func(t *testing.T) {
+		req := httptest.NewRequest("GET", "/v1/auth/me", nil)
+		req.Header.Set("Authorization", "Bearer "+adminToken)
+		req.Header.Set("X-Impersonate-Token", "non-existent-role")
+		rec := httptest.NewRecorder()
+		mux.ServeHTTP(rec, req)
+
+		assert.Equal(t, http.StatusBadRequest, rec.Code)
+
+		var resp ErrorResponse
+		err := json.NewDecoder(rec.Body).Decode(&resp)
+		require.NoError(t, err)
+		assert.Equal(t, "impersonated role not found", resp.Error)
+	})
 }
