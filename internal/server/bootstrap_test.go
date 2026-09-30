@@ -25,7 +25,6 @@ func TestMain(m *testing.M) {
 	os.Exit(m.Run())
 }
 
-
 // newTestStore creates an in-memory SQLite store for testing.
 func newTestStore(t *testing.T) *store.Store {
 	t.Helper()
