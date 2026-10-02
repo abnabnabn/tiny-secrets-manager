@@ -215,6 +215,14 @@ func TestSystemHandlers(t *testing.T) {
 		if w.Code != http.StatusInternalServerError {
 			t.Errorf("expected 500, got %d", w.Code)
 		}
+
+		var errResp ErrorResponse
+		if err := json.NewDecoder(w.Body).Decode(&errResp); err != nil {
+			t.Fatalf("failed to decode response body: %v", err)
+		}
+		if errResp.Error != "backup failed" {
+			t.Errorf("expected generic error message 'backup failed', got %q", errResp.Error)
+		}
 	})
 
 	t.Run("ForbiddenForNonAdmin", func(t *testing.T) {
