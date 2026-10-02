@@ -97,7 +97,7 @@ func (s *Server) handleTriggerBackup(w http.ResponseWriter, r *http.Request) {
 
 	if err := s.runBackup(); err != nil {
 		s.logger.Error("manual backup failed", "err", err)
-		s.respondError(w, http.StatusInternalServerError, "backup failed: "+err.Error())
+		s.respondError(w, http.StatusInternalServerError, "backup failed")
 		return
 	}
 

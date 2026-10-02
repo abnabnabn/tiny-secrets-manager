@@ -7,7 +7,9 @@ import (
 	"log/slog"
 	"net/http"
 	"net/http/httptest"
+	"fmt"
 	"os"
+	"strings"
 	"testing"
 
 	"tiny-secrets-manager/internal/config"
@@ -24,7 +26,8 @@ func setupTestServer(t *testing.T) (*Server, *store.Store, *http.ServeMux, strin
 
 	// Use in-memory SQLite for testing
 	masterKeyB64 := "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=" // 32 bytes of zeros, base64 encoded
-	db, err := store.New(":memory:", masterKeyB64, "", logger)
+	dsn := fmt.Sprintf("file:%s?mode=memory&cache=shared", strings.ReplaceAll(t.Name(), "/", "_"))
+	db, err := store.New(dsn, masterKeyB64, "", logger)
 	require.NoError(t, err)
 
 	// Seed admin user

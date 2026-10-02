@@ -8,6 +8,7 @@ import (
 	"net/http"
 	"os"
 	"os/signal"
+	"strings"
 	"syscall"
 	"time"
 
@@ -105,13 +106,9 @@ func main() {
 		os.Exit(1)
 	}
 
-	if backupTargetFlag == "" {
-		backupTargetFlag = os.Getenv("TSM_BACKUP_TARGET")
-	}
-	if backupTargetFlag != "" {
-		if err := db.PutSetting(context.Background(), "backup_target", backupTargetFlag); err != nil {
-			logger.Error("failed to seed backup target", "err", err)
-		}
+	if err := seedBackupTarget(context.Background(), db, backupTargetFlag); err != nil {
+		logger.Error("failed to seed backup target", "err", err)
+		os.Exit(1)
 	}
 
 	if seedOnlyFlag {
@@ -123,6 +120,23 @@ func main() {
 		logger.Error("server error", "err", err)
 		os.Exit(1)
 	}
+}
+
+func seedBackupTarget(ctx context.Context, db *store.Store, target string) error {
+	if target == "" {
+		target = os.Getenv("TSM_BACKUP_TARGET")
+	}
+	if target == "" {
+		return nil
+	}
+	trimmed := strings.TrimSpace(target)
+	if strings.HasPrefix(trimmed, "-") {
+		return fmt.Errorf("invalid backup target: cannot start with a dash")
+	}
+	if err := db.PutSetting(ctx, "backup_target", trimmed); err != nil {
+		return fmt.Errorf("failed to seed backup target: %w", err)
+	}
+	return nil
 }
 
 func runServer(cfg *config.Config, db *store.Store, logger *slog.Logger) error {

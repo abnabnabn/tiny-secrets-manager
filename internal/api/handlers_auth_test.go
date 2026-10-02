@@ -53,20 +53,90 @@ func TestHandleLogin(t *testing.T) {
 	})
 }
 
+func TestHandleLogin_RateLimit(t *testing.T) {
+	_, db, mux, _ := setupTestServer(t)
+	defer db.Close()
+
+	body := map[string]string{
+		"username": "admin",
+		"password": "wrongpassword",
+	}
+	b, _ := json.Marshal(body)
+
+	ip := "192.0.2.1:12345"
+
+	// First 5 requests should get 401 Unauthorized
+	for i := 0; i < 5; i++ {
+		req := httptest.NewRequest("POST", "/v1/auth/login", bytes.NewBuffer(b))
+		req.RemoteAddr = ip
+		rec := httptest.NewRecorder()
+		mux.ServeHTTP(rec, req)
+		assert.Equal(t, http.StatusUnauthorized, rec.Code)
+	}
+
+	// 6th request should be rate limited with 429 Too Many Requests
+	req := httptest.NewRequest("POST", "/v1/auth/login", bytes.NewBuffer(b))
+	req.RemoteAddr = ip
+	rec := httptest.NewRecorder()
+	mux.ServeHTTP(rec, req)
+
+	assert.Equal(t, http.StatusTooManyRequests, rec.Code)
+}
+
 func TestHandleLogout(t *testing.T) {
 	_, db, mux, _ := setupTestServer(t)
 	defer db.Close()
 
-	req := httptest.NewRequest("POST", "/v1/auth/logout", nil)
-	rec := httptest.NewRecorder()
-	mux.ServeHTTP(rec, req)
+	t.Run("clears_cookie_unauthenticated", func(t *testing.T) {
+		req := httptest.NewRequest("POST", "/v1/auth/logout", nil)
+		rec := httptest.NewRecorder()
+		mux.ServeHTTP(rec, req)
 
-	assert.Equal(t, http.StatusNoContent, rec.Code)
-	cookies := rec.Result().Cookies()
-	require.Len(t, cookies, 1)
-	assert.Equal(t, "tsm_admin", cookies[0].Name)
-	assert.Equal(t, "", cookies[0].Value)
-	assert.Equal(t, -1, cookies[0].MaxAge)
+		assert.Equal(t, http.StatusNoContent, rec.Code)
+		cookies := rec.Result().Cookies()
+		require.Len(t, cookies, 1)
+		assert.Equal(t, "tsm_admin", cookies[0].Name)
+		assert.Equal(t, "", cookies[0].Value)
+		assert.Equal(t, -1, cookies[0].MaxAge)
+	})
+
+	t.Run("revokes_session_role_on_logout", func(t *testing.T) {
+		// 1. Login to generate a session token
+		body := map[string]string{
+			"username": "admin",
+			"password": "testpass",
+		}
+		b, _ := json.Marshal(body)
+		loginReq := httptest.NewRequest("POST", "/v1/auth/login", bytes.NewBuffer(b))
+		loginRec := httptest.NewRecorder()
+		mux.ServeHTTP(loginRec, loginReq)
+
+		require.Equal(t, http.StatusOK, loginRec.Code)
+		cookies := loginRec.Result().Cookies()
+		require.Len(t, cookies, 1)
+		sessionCookie := cookies[0]
+
+		// 2. Verify session cookie works for /v1/auth/me
+		meReq := httptest.NewRequest("GET", "/v1/auth/me", nil)
+		meReq.AddCookie(sessionCookie)
+		meRec := httptest.NewRecorder()
+		mux.ServeHTTP(meRec, meReq)
+		assert.Equal(t, http.StatusOK, meRec.Code)
+
+		// 3. Logout with the session cookie
+		logoutReq := httptest.NewRequest("POST", "/v1/auth/logout", nil)
+		logoutReq.AddCookie(sessionCookie)
+		logoutRec := httptest.NewRecorder()
+		mux.ServeHTTP(logoutRec, logoutReq)
+		assert.Equal(t, http.StatusNoContent, logoutRec.Code)
+
+		// 4. Verify original session token is now revoked on the server
+		meReq2 := httptest.NewRequest("GET", "/v1/auth/me", nil)
+		meReq2.AddCookie(sessionCookie)
+		meRec2 := httptest.NewRecorder()
+		mux.ServeHTTP(meRec2, meReq2)
+		assert.Equal(t, http.StatusUnauthorized, meRec2.Code)
+	})
 }
 
 func TestHandleAuthMe(t *testing.T) {
@@ -204,5 +274,20 @@ func TestHandleAuthMe(t *testing.T) {
 		assert.True(t, client.CanCreate)
 		require.Len(t, client.Policies, 1)
 		assert.Equal(t, "app.*", client.Policies[0].Prefix)
+	})
+
+	t.Run("bad_request_impersonation_non_existent", func(t *testing.T) {
+		req := httptest.NewRequest("GET", "/v1/auth/me", nil)
+		req.Header.Set("Authorization", "Bearer "+adminToken)
+		req.Header.Set("X-Impersonate-Token", "non-existent-role")
+		rec := httptest.NewRecorder()
+		mux.ServeHTTP(rec, req)
+
+		assert.Equal(t, http.StatusBadRequest, rec.Code)
+
+		var resp ErrorResponse
+		err := json.NewDecoder(rec.Body).Decode(&resp)
+		require.NoError(t, err)
+		assert.Equal(t, "impersonated role not found", resp.Error)
 	})
 }

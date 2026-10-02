@@ -215,6 +215,22 @@ func TestSystemHandlers(t *testing.T) {
 		if w.Code != http.StatusInternalServerError {
 			t.Errorf("expected 500, got %d", w.Code)
 		}
+
+		var errResp struct {
+			Error  string `json:"error"`
+			Status int    `json:"status"`
+		}
+		if err := json.Unmarshal(w.Body.Bytes(), &errResp); err != nil {
+			t.Fatalf("failed to unmarshal error response: %v", err)
+		}
+
+		if errResp.Error != "backup failed" {
+			t.Errorf("expected generic error 'backup failed', got %q", errResp.Error)
+		}
+
+		if bytes.Contains(w.Body.Bytes(), []byte(invalidPath)) {
+			t.Errorf("error response leaked internal filesystem path: %s", w.Body.String())
+		}
 	})
 
 	t.Run("ForbiddenForNonAdmin", func(t *testing.T) {

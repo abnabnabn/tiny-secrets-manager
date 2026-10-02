@@ -11,11 +11,68 @@ import (
 	"net/http"
 	"regexp"
 	"strings"
+	"sync"
 	"time"
 
 	"tiny-secrets-manager/internal/config"
 	"tiny-secrets-manager/internal/store"
 )
+
+type rateLimiter struct {
+	mu          sync.Mutex
+	attempts    map[string][]time.Time
+	lastCleanup time.Time
+}
+
+func newRateLimiter() *rateLimiter {
+	return &rateLimiter{
+		attempts:    make(map[string][]time.Time),
+		lastCleanup: time.Now(),
+	}
+}
+
+func (rl *rateLimiter) allow(ip string, limit int, window time.Duration) bool {
+	rl.mu.Lock()
+	defer rl.mu.Unlock()
+
+	now := time.Now()
+	cutoff := now.Add(-window)
+
+	// Periodic sweep of expired attempts to prevent unbounded map growth
+	if time.Since(rl.lastCleanup) > 5*time.Minute || len(rl.attempts) > 1000 {
+		for k, ts := range rl.attempts {
+			var active []time.Time
+			for _, t := range ts {
+				if t.After(cutoff) {
+					active = append(active, t)
+				}
+			}
+			if len(active) == 0 {
+				delete(rl.attempts, k)
+			} else {
+				rl.attempts[k] = active
+			}
+		}
+		rl.lastCleanup = now
+	}
+
+	timestamps := rl.attempts[ip]
+	var valid []time.Time
+	for _, t := range timestamps {
+		if t.After(cutoff) {
+			valid = append(valid, t)
+		}
+	}
+
+	if len(valid) >= limit {
+		rl.attempts[ip] = valid
+		return false
+	}
+
+	valid = append(valid, now)
+	rl.attempts[ip] = valid
+	return true
+}
 
 // Storage defines the interface for the backend storage engine, enabling dependency injection.
 type Storage interface {
@@ -95,6 +152,7 @@ type Server struct {
 	logger        *slog.Logger
 	version       string
 	backupTrigger chan struct{}
+	loginLimiter  *rateLimiter
 }
 
 // NewServer initializes a new API server instance.
@@ -105,6 +163,7 @@ func NewServer(s Storage, cfg *config.Config, logger *slog.Logger, version strin
 		logger:        logger,
 		version:       version,
 		backupTrigger: make(chan struct{}, 1),
+		loginLimiter:  newRateLimiter(),
 	}
 	go srv.backupLoop()
 	return srv
@@ -157,12 +216,19 @@ func (s *Server) RegisterRoutes(mux *http.ServeMux) {
 
 var variableRegex = regexp.MustCompile(`\$\{([^}]+)\}`)
 
+const maxResolveDepth = 10
+
 // resolveVariables parses text for ${key} patterns and replaces them with their
 // corresponding secret values, provided the client has GET permission for them.
-// A visited map is used to prevent infinite recursive resolution in case of circular references.
+// A visited map is used to prevent infinite recursive resolution in case of circular references
+// or stack exhaustion/exponential expansion Denial of Service via deeply nested variables.
 func (s *Server) resolveVariables(ctx context.Context, client Client, text string, visited map[string]bool) string {
 	if visited == nil {
 		visited = make(map[string]bool)
+	}
+
+	if len(visited) >= maxResolveDepth {
+		return text // Cap recursion depth to prevent stack overflow and exponential expansion DoS
 	}
 
 	return variableRegex.ReplaceAllStringFunc(text, func(match string) string {
@@ -298,7 +364,11 @@ func (s *Server) auth(next http.HandlerFunc) http.HandlerFunc {
 					client.Name = tr.Name
 					client.CanCreate = tr.CanCreate
 					_ = json.Unmarshal(tr.Policies, &client.Policies)
-				} else if err != sql.ErrNoRows {
+				} else if err == sql.ErrNoRows {
+					// Prevent fail-open privilege escalation when impersonated role is not found
+					s.respondError(w, http.StatusBadRequest, "impersonated role not found")
+					return
+				} else {
 					s.logger.Error("token lookup for impersonation failed", "err", err)
 					s.respondError(w, http.StatusInternalServerError, "internal server error")
 					return
