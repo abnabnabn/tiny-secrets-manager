@@ -14,6 +14,10 @@ import (
 	"tiny-secrets-manager/internal/store"
 )
 
+func isProtectedRole(name string) bool {
+	return name == "admin" || strings.HasPrefix(name, "session_")
+}
+
 func (s *Server) handleListRoles(w http.ResponseWriter, r *http.Request) {
 	client := r.Context().Value(clientCtxKey).(Client)
 	if !client.IsAdmin {
@@ -64,6 +68,11 @@ func (s *Server) handleCreateRole(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	if isProtectedRole(req.Name) {
+		s.respondError(w, http.StatusBadRequest, "cannot modify protected role")
+		return
+	}
+
 	policiesJSON, _ := json.Marshal(req.Policies)
 	raw := make([]byte, 32)
 	_, _ = rand.Read(raw)
@@ -99,6 +108,11 @@ func (s *Server) handleUpdateRole(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	if isProtectedRole(name) {
+		s.respondError(w, http.StatusBadRequest, "cannot modify protected role")
+		return
+	}
+
 	r.Body = http.MaxBytesReader(w, r.Body, maxPayloadBytes)
 	var req struct {
 		Policies  []config.Policy `json:"policies"`
@@ -131,10 +145,16 @@ func (s *Server) handleDeleteRole(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	name := r.PathValue("name")
+	if isProtectedRole(name) {
+		s.respondError(w, http.StatusBadRequest, "cannot modify protected role")
+		return
+	}
+
 	ctx, cancel := context.WithTimeout(r.Context(), dbTimeout)
 	defer cancel()
 
-	if err := s.store.DeleteRole(ctx, r.PathValue("name")); err != nil {
+	if err := s.store.DeleteRole(ctx, name); err != nil {
 		s.logger.Error("role deletion failed", "err", err)
 		s.respondError(w, http.StatusInternalServerError, "internal server error")
 		return
@@ -154,6 +174,11 @@ func (s *Server) handleRegenerateRoleToken(w http.ResponseWriter, r *http.Reques
 	name := r.PathValue("name")
 	if name == "" {
 		s.respondError(w, http.StatusBadRequest, "missing name")
+		return
+	}
+
+	if isProtectedRole(name) {
+		s.respondError(w, http.StatusBadRequest, "cannot modify protected role")
 		return
 	}
 
