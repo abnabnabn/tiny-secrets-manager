@@ -224,3 +224,54 @@ func TestHandleRegenerateRecoveryKeys(t *testing.T) {
 		assert.Equal(t, http.StatusUnauthorized, resp.Status)
 	})
 }
+
+func TestProtectedRoles(t *testing.T) {
+	_, db, mux, adminToken := setupTestServer(t)
+	defer db.Close()
+
+	protectedNames := []string{"admin", "session_user_12345"}
+
+	for _, name := range protectedNames {
+		t.Run("create_"+name, func(t *testing.T) {
+			body := map[string]interface{}{"name": name}
+			b, _ := json.Marshal(body)
+
+			req := httptest.NewRequest("POST", "/v1/roles", bytes.NewBuffer(b))
+			req.Header.Set("Authorization", "Bearer "+adminToken)
+			rec := httptest.NewRecorder()
+			mux.ServeHTTP(rec, req)
+
+			assert.Equal(t, http.StatusBadRequest, rec.Code)
+		})
+
+		t.Run("update_"+name, func(t *testing.T) {
+			body := map[string]interface{}{"policies": []config.Policy{}}
+			b, _ := json.Marshal(body)
+
+			req := httptest.NewRequest("PUT", "/v1/roles/"+name, bytes.NewBuffer(b))
+			req.Header.Set("Authorization", "Bearer "+adminToken)
+			rec := httptest.NewRecorder()
+			mux.ServeHTTP(rec, req)
+
+			assert.Equal(t, http.StatusBadRequest, rec.Code)
+		})
+
+		t.Run("delete_"+name, func(t *testing.T) {
+			req := httptest.NewRequest("DELETE", "/v1/roles/"+name, nil)
+			req.Header.Set("Authorization", "Bearer "+adminToken)
+			rec := httptest.NewRecorder()
+			mux.ServeHTTP(rec, req)
+
+			assert.Equal(t, http.StatusBadRequest, rec.Code)
+		})
+
+		t.Run("regenerate_"+name, func(t *testing.T) {
+			req := httptest.NewRequest("POST", "/v1/roles/"+name+"/regenerate", nil)
+			req.Header.Set("Authorization", "Bearer "+adminToken)
+			rec := httptest.NewRecorder()
+			mux.ServeHTTP(rec, req)
+
+			assert.Equal(t, http.StatusBadRequest, rec.Code)
+		})
+	}
+}
