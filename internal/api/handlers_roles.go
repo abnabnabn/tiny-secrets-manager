@@ -34,7 +34,7 @@ func (s *Server) handleListRoles(w http.ResponseWriter, r *http.Request) {
 	// Filter out internal session tokens and the default admin token
 	filtered := make([]store.RoleRecord, 0)
 	for _, t := range tokens {
-		if !strings.HasPrefix(t.Name, "session_") && t.Name != "admin" {
+		if !isProtectedRole(t.Name) {
 			filtered = append(filtered, t)
 		}
 	}
@@ -61,6 +61,11 @@ func (s *Server) handleCreateRole(w http.ResponseWriter, r *http.Request) {
 	}
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil || req.Name == "" {
 		s.respondError(w, http.StatusBadRequest, "invalid payload")
+		return
+	}
+
+	if isProtectedRole(req.Name) {
+		s.respondError(w, http.StatusBadRequest, "cannot modify protected role")
 		return
 	}
 
@@ -99,6 +104,11 @@ func (s *Server) handleUpdateRole(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	if isProtectedRole(name) {
+		s.respondError(w, http.StatusBadRequest, "cannot modify protected role")
+		return
+	}
+
 	r.Body = http.MaxBytesReader(w, r.Body, maxPayloadBytes)
 	var req struct {
 		Policies  []config.Policy `json:"policies"`
@@ -131,10 +141,16 @@ func (s *Server) handleDeleteRole(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	name := r.PathValue("name")
+	if isProtectedRole(name) {
+		s.respondError(w, http.StatusBadRequest, "cannot modify protected role")
+		return
+	}
+
 	ctx, cancel := context.WithTimeout(r.Context(), dbTimeout)
 	defer cancel()
 
-	if err := s.store.DeleteRole(ctx, r.PathValue("name")); err != nil {
+	if err := s.store.DeleteRole(ctx, name); err != nil {
 		s.logger.Error("role deletion failed", "err", err)
 		s.respondError(w, http.StatusInternalServerError, "internal server error")
 		return
@@ -157,6 +173,11 @@ func (s *Server) handleRegenerateRoleToken(w http.ResponseWriter, r *http.Reques
 		return
 	}
 
+	if isProtectedRole(name) {
+		s.respondError(w, http.StatusBadRequest, "cannot modify protected role")
+		return
+	}
+
 	raw := make([]byte, 32)
 	_, _ = rand.Read(raw)
 	tokenStr := base64.RawURLEncoding.EncodeToString(raw)
@@ -176,6 +197,10 @@ func (s *Server) handleRegenerateRoleToken(w http.ResponseWriter, r *http.Reques
 	if err := json.NewEncoder(w).Encode(map[string]string{"token": tokenStr}); err != nil {
 		s.logger.Error("failed to encode token response", "err", err)
 	}
+}
+
+func isProtectedRole(name string) bool {
+	return name == "admin" || strings.HasPrefix(name, "session_")
 }
 
 func (s *Server) handleRegenerateRecoveryKeys(w http.ResponseWriter, r *http.Request) {

@@ -149,6 +149,82 @@ func TestHandleRoleLifecycle(t *testing.T) {
 	})
 }
 
+func TestProtectedRolesRestrictions(t *testing.T) {
+	_, db, mux, adminToken := setupTestServer(t)
+	defer db.Close()
+
+	protectedRoles := []string{"admin", "session_user_12345"}
+
+	for _, roleName := range protectedRoles {
+		t.Run("create_protected_role_"+roleName, func(t *testing.T) {
+			body := map[string]interface{}{
+				"name": roleName,
+				"policies": []config.Policy{
+					{Prefix: "*", Methods: []string{"GET"}},
+				},
+			}
+			b, _ := json.Marshal(body)
+
+			req := httptest.NewRequest("POST", "/v1/roles", bytes.NewBuffer(b))
+			req.Header.Set("Authorization", "Bearer "+adminToken)
+			rec := httptest.NewRecorder()
+			mux.ServeHTTP(rec, req)
+
+			assert.Equal(t, http.StatusBadRequest, rec.Code)
+			var resp ErrorResponse
+			err := json.NewDecoder(rec.Body).Decode(&resp)
+			require.NoError(t, err)
+			assert.Equal(t, "cannot modify protected role", resp.Error)
+		})
+
+		t.Run("update_protected_role_"+roleName, func(t *testing.T) {
+			body := map[string]interface{}{
+				"policies": []config.Policy{
+					{Prefix: "*", Methods: []string{"GET"}},
+				},
+			}
+			b, _ := json.Marshal(body)
+
+			req := httptest.NewRequest("PUT", "/v1/roles/"+roleName, bytes.NewBuffer(b))
+			req.Header.Set("Authorization", "Bearer "+adminToken)
+			rec := httptest.NewRecorder()
+			mux.ServeHTTP(rec, req)
+
+			assert.Equal(t, http.StatusBadRequest, rec.Code)
+			var resp ErrorResponse
+			err := json.NewDecoder(rec.Body).Decode(&resp)
+			require.NoError(t, err)
+			assert.Equal(t, "cannot modify protected role", resp.Error)
+		})
+
+		t.Run("delete_protected_role_"+roleName, func(t *testing.T) {
+			req := httptest.NewRequest("DELETE", "/v1/roles/"+roleName, nil)
+			req.Header.Set("Authorization", "Bearer "+adminToken)
+			rec := httptest.NewRecorder()
+			mux.ServeHTTP(rec, req)
+
+			assert.Equal(t, http.StatusBadRequest, rec.Code)
+			var resp ErrorResponse
+			err := json.NewDecoder(rec.Body).Decode(&resp)
+			require.NoError(t, err)
+			assert.Equal(t, "cannot modify protected role", resp.Error)
+		})
+
+		t.Run("regenerate_protected_role_"+roleName, func(t *testing.T) {
+			req := httptest.NewRequest("POST", "/v1/roles/"+roleName+"/regenerate", nil)
+			req.Header.Set("Authorization", "Bearer "+adminToken)
+			rec := httptest.NewRecorder()
+			mux.ServeHTTP(rec, req)
+
+			assert.Equal(t, http.StatusBadRequest, rec.Code)
+			var resp ErrorResponse
+			err := json.NewDecoder(rec.Body).Decode(&resp)
+			require.NoError(t, err)
+			assert.Equal(t, "cannot modify protected role", resp.Error)
+		})
+	}
+}
+
 func TestHandleRegenerateRecoveryKeys(t *testing.T) {
 	_, db, mux, adminToken := setupTestServer(t)
 	defer db.Close()
