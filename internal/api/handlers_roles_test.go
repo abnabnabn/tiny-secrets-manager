@@ -147,6 +147,45 @@ func TestHandleRoleLifecycle(t *testing.T) {
 
 		assert.Equal(t, http.StatusNoContent, rec.Code)
 	})
+
+	// 6. Protected Roles Protection Checks
+	t.Run("protected_roles_protection", func(t *testing.T) {
+		protectedNames := []string{"admin", "session_user123"}
+
+		for _, name := range protectedNames {
+			// Create protected role -> Should fail 400
+			bodyCreate := map[string]interface{}{"name": name}
+			bCreate, _ := json.Marshal(bodyCreate)
+			reqCreate := httptest.NewRequest("POST", "/v1/roles", bytes.NewBuffer(bCreate))
+			reqCreate.Header.Set("Authorization", "Bearer "+adminToken)
+			recCreate := httptest.NewRecorder()
+			mux.ServeHTTP(recCreate, reqCreate)
+			assert.Equal(t, http.StatusBadRequest, recCreate.Code)
+
+			// Update protected role -> Should fail 400
+			bodyUpdate := map[string]interface{}{"can_create": true}
+			bUpdate, _ := json.Marshal(bodyUpdate)
+			reqUpdate := httptest.NewRequest("PUT", "/v1/roles/"+name, bytes.NewBuffer(bUpdate))
+			reqUpdate.Header.Set("Authorization", "Bearer "+adminToken)
+			recUpdate := httptest.NewRecorder()
+			mux.ServeHTTP(recUpdate, reqUpdate)
+			assert.Equal(t, http.StatusBadRequest, recUpdate.Code)
+
+			// Regenerate token for protected role -> Should fail 400
+			reqRegen := httptest.NewRequest("POST", "/v1/roles/"+name+"/regenerate", nil)
+			reqRegen.Header.Set("Authorization", "Bearer "+adminToken)
+			recRegen := httptest.NewRecorder()
+			mux.ServeHTTP(recRegen, reqRegen)
+			assert.Equal(t, http.StatusBadRequest, recRegen.Code)
+
+			// Delete protected role -> Should fail 400
+			reqDel := httptest.NewRequest("DELETE", "/v1/roles/"+name, nil)
+			reqDel.Header.Set("Authorization", "Bearer "+adminToken)
+			recDel := httptest.NewRecorder()
+			mux.ServeHTTP(recDel, reqDel)
+			assert.Equal(t, http.StatusBadRequest, recDel.Code)
+		}
+	})
 }
 
 func TestHandleRegenerateRecoveryKeys(t *testing.T) {
