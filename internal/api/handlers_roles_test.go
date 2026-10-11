@@ -17,6 +17,66 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
+func TestProtectedRoles(t *testing.T) {
+	_, db, mux, adminToken := setupTestServer(t)
+	defer db.Close()
+
+	protectedNames := []string{"admin", "session_user_123"}
+
+	for _, name := range protectedNames {
+		t.Run("create_protected_"+name, func(t *testing.T) {
+			body := map[string]interface{}{
+				"name": name,
+				"policies": []config.Policy{
+					{Prefix: "app.*", Methods: []string{"GET"}},
+				},
+			}
+			b, _ := json.Marshal(body)
+
+			req := httptest.NewRequest("POST", "/v1/roles", bytes.NewBuffer(b))
+			req.Header.Set("Authorization", "Bearer "+adminToken)
+			rec := httptest.NewRecorder()
+			mux.ServeHTTP(rec, req)
+
+			assert.Equal(t, http.StatusBadRequest, rec.Code)
+		})
+
+		t.Run("update_protected_"+name, func(t *testing.T) {
+			body := map[string]interface{}{
+				"policies": []config.Policy{
+					{Prefix: "*", Methods: []string{"GET"}},
+				},
+			}
+			b, _ := json.Marshal(body)
+
+			req := httptest.NewRequest("PUT", "/v1/roles/"+name, bytes.NewBuffer(b))
+			req.Header.Set("Authorization", "Bearer "+adminToken)
+			rec := httptest.NewRecorder()
+			mux.ServeHTTP(rec, req)
+
+			assert.Equal(t, http.StatusBadRequest, rec.Code)
+		})
+
+		t.Run("delete_protected_"+name, func(t *testing.T) {
+			req := httptest.NewRequest("DELETE", "/v1/roles/"+name, nil)
+			req.Header.Set("Authorization", "Bearer "+adminToken)
+			rec := httptest.NewRecorder()
+			mux.ServeHTTP(rec, req)
+
+			assert.Equal(t, http.StatusBadRequest, rec.Code)
+		})
+
+		t.Run("regenerate_protected_"+name, func(t *testing.T) {
+			req := httptest.NewRequest("POST", "/v1/roles/"+name+"/regenerate", nil)
+			req.Header.Set("Authorization", "Bearer "+adminToken)
+			rec := httptest.NewRecorder()
+			mux.ServeHTTP(rec, req)
+
+			assert.Equal(t, http.StatusBadRequest, rec.Code)
+		})
+	}
+}
+
 func TestHandleRoleLifecycle(t *testing.T) {
 	_, db, mux, adminToken := setupTestServer(t)
 	defer db.Close()
