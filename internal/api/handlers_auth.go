@@ -24,6 +24,10 @@ func clientIP(r *http.Request) string {
 	return host
 }
 
+// dummyBcryptHash is a valid bcrypt hash (cost 10) used to execute dummy password comparisons
+// for non-existent users, mitigating timing attacks for username enumeration.
+const dummyBcryptHash = "$2a$10$vQX8J7Q1I6l/7a.5e/H4m.51L8w6T9/3D60p/2W5.N4L/e0M4a3gC"
+
 func (s *Server) handleLogin(w http.ResponseWriter, r *http.Request) {
 	ip := clientIP(r)
 	if !s.loginLimiter.allow(ip, 5, 1*time.Minute) {
@@ -46,6 +50,8 @@ func (s *Server) handleLogin(w http.ResponseWriter, r *http.Request) {
 
 	hash, err := s.store.GetAdmin(ctx, req.Username)
 	if err == sql.ErrNoRows {
+		// Execute dummy bcrypt check to keep processing time constant and mitigate username enumeration
+		_ = bcrypt.CompareHashAndPassword([]byte(dummyBcryptHash), []byte(req.Password))
 		s.respondError(w, http.StatusUnauthorized, "unauthorized")
 		return
 	} else if err != nil {
