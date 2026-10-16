@@ -16,6 +16,10 @@ import (
 	"golang.org/x/crypto/bcrypt"
 )
 
+// Pre-calculated bcrypt hash for timing attack mitigation when username is not found.
+// Hash of "dummy_password_for_timing_protection" with cost 10.
+const dummyBcryptHash = "$2a$10$N9qo8uLOickgx2ZMRZoMyeIjZAgcfl7p92ldGxad68LJZdL17lhWy"
+
 func clientIP(r *http.Request) string {
 	host, _, err := net.SplitHostPort(r.RemoteAddr)
 	if err != nil {
@@ -44,17 +48,19 @@ func (s *Server) handleLogin(w http.ResponseWriter, r *http.Request) {
 	ctx, cancel := context.WithTimeout(r.Context(), dbTimeout)
 	defer cancel()
 
+	userFound := true
 	hash, err := s.store.GetAdmin(ctx, req.Username)
 	if err == sql.ErrNoRows {
-		s.respondError(w, http.StatusUnauthorized, "unauthorized")
-		return
+		userFound = false
+		hash = dummyBcryptHash
 	} else if err != nil {
 		s.logger.Error("admin lookup failed", "err", err)
 		s.respondError(w, http.StatusInternalServerError, "internal server error")
 		return
 	}
 
-	if err := bcrypt.CompareHashAndPassword([]byte(hash), []byte(req.Password)); err != nil {
+	// Always execute bcrypt comparison to normalize timing and prevent username enumeration
+	if err := bcrypt.CompareHashAndPassword([]byte(hash), []byte(req.Password)); err != nil || !userFound {
 		s.respondError(w, http.StatusUnauthorized, "unauthorized")
 		return
 	}
