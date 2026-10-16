@@ -51,6 +51,20 @@ func TestHandleLogin(t *testing.T) {
 
 		assert.Equal(t, http.StatusUnauthorized, rec.Code)
 	})
+
+	t.Run("non_existent_user_timing_protection", func(t *testing.T) {
+		body := map[string]string{
+			"username": "non_existent_admin_user",
+			"password": "wrongpassword",
+		}
+		b, _ := json.Marshal(body)
+		req := httptest.NewRequest("POST", "/v1/auth/login", bytes.NewBuffer(b))
+		req.RemoteAddr = "192.0.2.10:12345"
+		rec := httptest.NewRecorder()
+		mux.ServeHTTP(rec, req)
+
+		assert.Equal(t, http.StatusUnauthorized, rec.Code)
+	})
 }
 
 func TestHandleLogin_RateLimit(t *testing.T) {
