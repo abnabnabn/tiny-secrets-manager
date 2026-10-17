@@ -16,6 +16,8 @@ import (
 	"golang.org/x/crypto/bcrypt"
 )
 
+var dummyBcryptHash, _ = bcrypt.GenerateFromPassword([]byte("dummy-password-for-timing-mitigation"), 14)
+
 func clientIP(r *http.Request) string {
 	host, _, err := net.SplitHostPort(r.RemoteAddr)
 	if err != nil {
@@ -45,16 +47,17 @@ func (s *Server) handleLogin(w http.ResponseWriter, r *http.Request) {
 	defer cancel()
 
 	hash, err := s.store.GetAdmin(ctx, req.Username)
+	userFound := true
 	if err == sql.ErrNoRows {
-		s.respondError(w, http.StatusUnauthorized, "unauthorized")
-		return
+		userFound = false
+		hash = string(dummyBcryptHash)
 	} else if err != nil {
 		s.logger.Error("admin lookup failed", "err", err)
 		s.respondError(w, http.StatusInternalServerError, "internal server error")
 		return
 	}
 
-	if err := bcrypt.CompareHashAndPassword([]byte(hash), []byte(req.Password)); err != nil {
+	if err := bcrypt.CompareHashAndPassword([]byte(hash), []byte(req.Password)); err != nil || !userFound {
 		s.respondError(w, http.StatusUnauthorized, "unauthorized")
 		return
 	}
