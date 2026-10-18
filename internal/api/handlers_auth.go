@@ -16,6 +16,16 @@ import (
 	"golang.org/x/crypto/bcrypt"
 )
 
+var dummyBcryptHash string
+
+func init() {
+	// Generate dummy bcrypt hash at startup to normalize execution times and mitigate username enumeration
+	hash, err := bcrypt.GenerateFromPassword([]byte("dummy-password-for-timing-mitigation"), bcrypt.DefaultCost)
+	if err == nil {
+		dummyBcryptHash = string(hash)
+	}
+}
+
 func clientIP(r *http.Request) string {
 	host, _, err := net.SplitHostPort(r.RemoteAddr)
 	if err != nil {
@@ -46,6 +56,9 @@ func (s *Server) handleLogin(w http.ResponseWriter, r *http.Request) {
 
 	hash, err := s.store.GetAdmin(ctx, req.Username)
 	if err == sql.ErrNoRows {
+		if dummyBcryptHash != "" {
+			_ = bcrypt.CompareHashAndPassword([]byte(dummyBcryptHash), []byte(req.Password))
+		}
 		s.respondError(w, http.StatusUnauthorized, "unauthorized")
 		return
 	} else if err != nil {
