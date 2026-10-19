@@ -284,7 +284,9 @@ func bootstrapDEK(db *sql.DB, masterKeyB64 string, logger *slog.Logger) ([]byte,
 
 	for i := 0; i < 3; i++ {
 		bk := make([]byte, 32)
-		_, _ = rand.Read(bk)
+		if _, err := rand.Read(bk); err != nil {
+			return nil, fmt.Errorf("failed to generate random bytes for recovery key: %w", err)
+		}
 		bkB64 := base64.StdEncoding.EncodeToString(bk)
 
 		backupBox, _ := crypto.NewBox(bkB64)
@@ -316,7 +318,9 @@ func (s *Store) RegenerateRecoveryKeys(ctx context.Context) ([]string, error) {
 	keys := make([]string, 3)
 	for i := 0; i < 3; i++ {
 		rawKey := make([]byte, 32)
-		_, _ = rand.Read(rawKey)
+		if _, err := rand.Read(rawKey); err != nil {
+			return nil, fmt.Errorf("failed to generate random bytes for recovery key: %w", err)
+		}
 		b64Key := base64.StdEncoding.EncodeToString(rawKey)
 		keys[i] = b64Key
 
