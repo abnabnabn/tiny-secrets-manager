@@ -26,7 +26,9 @@ var BcryptCost = 14
 // of at least n bytes of entropy.
 func generateRandomString(n int) string {
 	b := make([]byte, n)
-	_, _ = rand.Read(b)
+	if _, err := rand.Read(b); err != nil {
+		panic("failed to read entropy from crypto/rand: " + err.Error())
+	}
 	return base64.RawURLEncoding.EncodeToString(b)
 }
 
@@ -45,7 +47,9 @@ func Bootstrap(logger *slog.Logger, configPath string) (*config.Config, error) {
 	logger.Info("no configuration found, initiating self-bootstrap...")
 
 	mKey := make([]byte, 32)
-	_, _ = rand.Read(mKey)
+	if _, err := rand.Read(mKey); err != nil {
+		return nil, fmt.Errorf("failed to generate random master key: %w", err)
+	}
 
 	cfg := &config.Config{
 		MasterKey: base64.StdEncoding.EncodeToString(mKey),
