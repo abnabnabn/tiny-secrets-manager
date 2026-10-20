@@ -75,7 +75,11 @@ func (s *Server) handleCreateRole(w http.ResponseWriter, r *http.Request) {
 
 	policiesJSON, _ := json.Marshal(req.Policies)
 	raw := make([]byte, 32)
-	_, _ = rand.Read(raw)
+	if _, err := rand.Read(raw); err != nil {
+		s.logger.Error("failed to generate random token", "err", err)
+		s.respondError(w, http.StatusInternalServerError, "internal server error")
+		return
+	}
 	tokenStr := base64.RawURLEncoding.EncodeToString(raw)
 	hash := sha256.Sum256([]byte(tokenStr))
 
@@ -183,7 +187,11 @@ func (s *Server) handleRegenerateRoleToken(w http.ResponseWriter, r *http.Reques
 	}
 
 	raw := make([]byte, 32)
-	_, _ = rand.Read(raw)
+	if _, err := rand.Read(raw); err != nil {
+		s.logger.Error("failed to generate random token", "err", err)
+		s.respondError(w, http.StatusInternalServerError, "internal server error")
+		return
+	}
 	tokenStr := base64.RawURLEncoding.EncodeToString(raw)
 	hash := sha256.Sum256([]byte(tokenStr))
 
