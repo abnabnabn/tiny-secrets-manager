@@ -451,13 +451,16 @@ func (s *Store) PutRole(ctx context.Context, name string, hash []byte, policiesJ
 	return err
 }
 
-// UpdateRole updates the policy JSON and expiration for an existing role name.
-func (s *Store) UpdateRole(ctx context.Context, name string, policiesJSON []byte, canCreate bool, expiresAt *time.Time) error {
+// UpdateRole updates the policy JSON, expiration, and optionally renames an existing role.
+func (s *Store) UpdateRole(ctx context.Context, oldName, newName string, policiesJSON []byte, canCreate bool, expiresAt *time.Time) error {
+	if newName == "" {
+		newName = oldName
+	}
 	createFlag := 0
 	if canCreate {
 		createFlag = 1
 	}
-	_, err := s.db.ExecContext(ctx, "UPDATE roles SET policies_json = ?, can_create = ?, expires_at = ? WHERE name = ?", string(policiesJSON), createFlag, expiresAt, name)
+	_, err := s.db.ExecContext(ctx, "UPDATE roles SET name = ?, policies_json = ?, can_create = ?, expires_at = ? WHERE name = ?", newName, string(policiesJSON), createFlag, expiresAt, oldName)
 	return err
 }
 

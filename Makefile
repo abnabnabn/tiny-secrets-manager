@@ -139,7 +139,7 @@ fmt:
 lint:
 	@echo "Linting code..."
 	go vet ./...
-	go run github.com/golangci/golangci-lint/cmd/golangci-lint@latest run
+	go run github.com/golangci/golangci-lint/cmd/golangci-lint@latest run --timeout 5m
 
 gosec:
 	@echo "Running Go Security Checker..."
@@ -156,6 +156,7 @@ install:
 	fi
 	@echo "Installing binaries to $(PREFIX)/bin..."
 	@mkdir -p $(PREFIX)/bin
+	@rm -f $(PREFIX)/bin/tiny-secrets-manager $(PREFIX)/bin/tsm
 	@cp $(BINARY) $(PREFIX)/bin/tiny-secrets-manager
 	@cp $(CLI_BINARY) $(PREFIX)/bin/tsm
 	@chmod 755 $(PREFIX)/bin/tiny-secrets-manager $(PREFIX)/bin/tsm

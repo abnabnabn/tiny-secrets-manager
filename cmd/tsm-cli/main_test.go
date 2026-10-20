@@ -210,6 +210,24 @@ func TestTSMCLI_Subcommands(t *testing.T) {
 			expectOut: "Role 'new-role' updated successfully.",
 		},
 		{
+			name: "role update - rename success",
+			args: []string{"tsm", "role", "update", "old-role", "--name", "renamed-role", "--policy", "dev.*"},
+			setupServer: func(w http.ResponseWriter, r *http.Request) {
+				assert.Equal(t, "/v1/roles/old-role", r.URL.Path)
+				assert.Equal(t, http.MethodPut, r.Method)
+
+				var body map[string]interface{}
+				_ = json.NewDecoder(r.Body).Decode(&body)
+				assert.Equal(t, "renamed-role", body["name"])
+
+				policies := body["policies"].([]interface{})
+				assert.Len(t, policies, 1)
+
+				w.WriteHeader(http.StatusOK)
+			},
+			expectOut: "Role 'old-role' updated successfully (renamed to 'renamed-role').",
+		},
+		{
 			name: "role export - stdout",
 			args: []string{"tsm", "role", "export"},
 			setupServer: func(w http.ResponseWriter, r *http.Request) {

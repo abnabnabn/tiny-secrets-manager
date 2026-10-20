@@ -138,9 +138,86 @@ func TestHandleRoleLifecycle(t *testing.T) {
 		roleToken = newToken
 	})
 
-	// 5. Delete Role
+	// 5. Rename Role
+	t.Run("rename_role", func(t *testing.T) {
+		// Renaming to protected role should fail
+		bodyBad := map[string]interface{}{
+			"name": "admin",
+			"policies": []config.Policy{
+				{Prefix: "*", Methods: []string{"GET"}},
+			},
+		}
+		bBad, _ := json.Marshal(bodyBad)
+		reqBad := httptest.NewRequest("PUT", "/v1/roles/test-machine", bytes.NewBuffer(bBad))
+		reqBad.Header.Set("Authorization", "Bearer "+adminToken)
+		recBad := httptest.NewRecorder()
+		mux.ServeHTTP(recBad, reqBad)
+		assert.Equal(t, http.StatusBadRequest, recBad.Code)
+
+		// Create another role to test conflict
+		createBody := map[string]interface{}{
+			"name": "other-machine",
+			"policies": []config.Policy{
+				{Prefix: "*", Methods: []string{"GET"}},
+			},
+		}
+		bCreate, _ := json.Marshal(createBody)
+		reqCreate := httptest.NewRequest("POST", "/v1/roles", bytes.NewBuffer(bCreate))
+		reqCreate.Header.Set("Authorization", "Bearer "+adminToken)
+		recCreate := httptest.NewRecorder()
+		mux.ServeHTTP(recCreate, reqCreate)
+		assert.Equal(t, http.StatusOK, recCreate.Code)
+
+		// Renaming to already existing role name should return Conflict (409)
+		bodyConflict := map[string]interface{}{
+			"name": "other-machine",
+			"policies": []config.Policy{
+				{Prefix: "*", Methods: []string{"GET"}},
+			},
+		}
+		bConflict, _ := json.Marshal(bodyConflict)
+		reqConflict := httptest.NewRequest("PUT", "/v1/roles/test-machine", bytes.NewBuffer(bConflict))
+		reqConflict.Header.Set("Authorization", "Bearer "+adminToken)
+		recConflict := httptest.NewRecorder()
+		mux.ServeHTTP(recConflict, reqConflict)
+		assert.Equal(t, http.StatusConflict, recConflict.Code)
+
+		// Delete other-machine
+		reqDelOther := httptest.NewRequest("DELETE", "/v1/roles/other-machine", nil)
+		reqDelOther.Header.Set("Authorization", "Bearer "+adminToken)
+		recDelOther := httptest.NewRecorder()
+		mux.ServeHTTP(recDelOther, reqDelOther)
+		assert.Equal(t, http.StatusNoContent, recDelOther.Code)
+
+		// Valid rename
+		body := map[string]interface{}{
+			"name": "test-machine-renamed",
+			"policies": []config.Policy{
+				{Prefix: "*", Methods: []string{"GET", "PUT"}},
+			},
+		}
+		b, _ := json.Marshal(body)
+		req := httptest.NewRequest("PUT", "/v1/roles/test-machine", bytes.NewBuffer(b))
+		req.Header.Set("Authorization", "Bearer "+adminToken)
+		rec := httptest.NewRecorder()
+		mux.ServeHTTP(rec, req)
+		assert.Equal(t, http.StatusNoContent, rec.Code)
+
+		// Verify auth/me returns the new name
+		reqMe := httptest.NewRequest("GET", "/v1/auth/me", nil)
+		reqMe.Header.Set("Authorization", "Bearer "+roleToken)
+		recMe := httptest.NewRecorder()
+		mux.ServeHTTP(recMe, reqMe)
+		assert.Equal(t, http.StatusOK, recMe.Code)
+		var client Client
+		err := json.NewDecoder(recMe.Body).Decode(&client)
+		require.NoError(t, err)
+		assert.Equal(t, "test-machine-renamed", client.Name)
+	})
+
+	// 6. Delete Role
 	t.Run("delete_role", func(t *testing.T) {
-		req := httptest.NewRequest("DELETE", "/v1/roles/test-machine", nil)
+		req := httptest.NewRequest("DELETE", "/v1/roles/test-machine-renamed", nil)
 		req.Header.Set("Authorization", "Bearer "+adminToken)
 		rec := httptest.NewRecorder()
 		mux.ServeHTTP(rec, req)

@@ -85,7 +85,7 @@ type Storage interface {
 	Delete(ctx context.Context, key string) error
 	ListRoles(ctx context.Context) ([]store.RoleRecord, error)
 	PutRole(ctx context.Context, name string, tokenHash []byte, policiesJSON []byte, isAdmin bool, canCreate bool, expiresAt *time.Time) error
-	UpdateRole(ctx context.Context, name string, policiesJSON []byte, canCreate bool, expiresAt *time.Time) error
+	UpdateRole(ctx context.Context, oldName, newName string, policiesJSON []byte, canCreate bool, expiresAt *time.Time) error
 	UpdateRoleToken(ctx context.Context, name string, newTokenHash []byte) error
 	DeleteRole(ctx context.Context, name string) error
 	RegenerateRecoveryKeys(ctx context.Context) ([]string, error)

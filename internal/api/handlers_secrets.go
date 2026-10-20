@@ -149,7 +149,7 @@ func (s *Server) handlePutSecret(w http.ResponseWriter, r *http.Request) {
 			})
 			policiesBytes, _ := json.Marshal(policies)
 
-			if err := s.store.UpdateRole(ctx, client.Name, policiesBytes, tr.CanCreate, tr.ExpiresAt); err != nil {
+			if err := s.store.UpdateRole(ctx, client.Name, client.Name, policiesBytes, tr.CanCreate, tr.ExpiresAt); err != nil {
 				s.logger.Error("failed to update role policies for new secret", "err", err)
 			}
 		}

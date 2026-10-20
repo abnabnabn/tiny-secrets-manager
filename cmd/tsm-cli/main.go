@@ -280,7 +280,7 @@ func (c *TSMCLI) roleUsage() {
 	fmt.Fprintln(c.Out, "\nCommands:")
 	fmt.Fprintln(c.Out, "  ls                                       - List all roles")
 	fmt.Fprintln(c.Out, "  create <name> [--can-create] --policy <prefix>[:<methods>] - Create a new role")
-	fmt.Fprintln(c.Out, "  update <name> [--can-create] --policy <prefix>[:<methods>] - Update an existing role's policies")
+	fmt.Fprintln(c.Out, "  update <name> [--name <new-name>] [--can-create] --policy <prefix>[:<methods>] - Update an existing role's policies")
 	fmt.Fprintln(c.Out, "  rm <name>                                - Delete a role")
 	fmt.Fprintln(c.Out, "  export [file.json]                       - Export all roles as JSON")
 	fmt.Fprintln(c.Out, "  import <file.json>                       - Bulk create/update roles from JSON")
@@ -888,15 +888,19 @@ func (c *TSMCLI) handleRoleCommand(cfg *Config, token string, args []string) err
 		return nil
 	case "update":
 		if len(args) < 2 {
-			return errors.New("usage: tsm role update <name> [--can-create] --policy <prefix>[:<methods>] [...]")
+			return errors.New("usage: tsm role update <name> [--name <new-name>] [--can-create] --policy <prefix>[:<methods>] [...]")
 		}
 		canCreate := false
+		newName := ""
 		var cleanArgs []string
-		for _, a := range args {
-			if a == "--can-create" {
+		for i := 0; i < len(args); i++ {
+			if args[i] == "--can-create" {
 				canCreate = true
+			} else if args[i] == "--name" && i+1 < len(args) {
+				newName = args[i+1]
+				i++
 			} else {
-				cleanArgs = append(cleanArgs, a)
+				cleanArgs = append(cleanArgs, args[i])
 			}
 		}
 		args = cleanArgs
@@ -910,6 +914,9 @@ func (c *TSMCLI) handleRoleCommand(cfg *Config, token string, args []string) err
 			"policies":   policies,
 			"can_create": canCreate,
 		}
+		if newName != "" {
+			reqBody["name"] = newName
+		}
 		body, err := json.Marshal(reqBody)
 		if err != nil {
 			return err
@@ -918,7 +925,11 @@ func (c *TSMCLI) handleRoleCommand(cfg *Config, token string, args []string) err
 		if err != nil {
 			return err
 		}
-		fmt.Fprintf(c.Out, "Role '%s' updated successfully.\n", name)
+		if newName != "" && newName != name {
+			fmt.Fprintf(c.Out, "Role '%s' updated successfully (renamed to '%s').\n", name, newName)
+		} else {
+			fmt.Fprintf(c.Out, "Role '%s' updated successfully.\n", name)
+		}
 		return nil
 	case "export":
 		data, err := c.apiRequest(token, "GET", "roles", nil)

@@ -53,7 +53,7 @@ func (m *MockStorage) PutRole(ctx context.Context, name string, tokenHash []byte
 	}
 	return nil
 }
-func (m *MockStorage) UpdateRole(ctx context.Context, name string, policiesJSON []byte, canCreate bool, expiresAt *time.Time) error {
+func (m *MockStorage) UpdateRole(ctx context.Context, oldName, newName string, policiesJSON []byte, canCreate bool, expiresAt *time.Time) error {
 	return nil
 }
 func (m *MockStorage) UpdateRoleToken(ctx context.Context, name string, newTokenHash []byte) error {

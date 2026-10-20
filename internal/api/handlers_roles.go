@@ -115,6 +115,7 @@ func (s *Server) handleUpdateRole(w http.ResponseWriter, r *http.Request) {
 
 	r.Body = http.MaxBytesReader(w, r.Body, maxPayloadBytes)
 	var req struct {
+		Name      string          `json:"name"`
 		Policies  []config.Policy `json:"policies"`
 		CanCreate bool            `json:"can_create"`
 		ExpiresAt *time.Time      `json:"expires_at"`
@@ -124,11 +125,30 @@ func (s *Server) handleUpdateRole(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	policiesJSON, _ := json.Marshal(req.Policies)
+	newName := strings.TrimSpace(req.Name)
+	if newName == "" {
+		newName = name
+	}
+
+	if isProtectedRole(newName) {
+		s.respondError(w, http.StatusBadRequest, "cannot modify protected role")
+		return
+	}
+
 	ctx, cancel := context.WithTimeout(r.Context(), dbTimeout)
 	defer cancel()
 
-	if err := s.store.UpdateRole(ctx, name, policiesJSON, req.CanCreate, req.ExpiresAt); err != nil {
+	if newName != name {
+		existing, err := s.store.GetRoleByName(ctx, newName)
+		if err == nil && existing != nil {
+			s.respondError(w, http.StatusConflict, "role name already exists")
+			return
+		}
+	}
+
+	policiesJSON, _ := json.Marshal(req.Policies)
+
+	if err := s.store.UpdateRole(ctx, name, newName, policiesJSON, req.CanCreate, req.ExpiresAt); err != nil {
 		s.logger.Error("db update role error", "err", err)
 		s.respondError(w, http.StatusInternalServerError, "internal server error")
 		return

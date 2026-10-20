@@ -880,11 +880,16 @@ function RoleManager({ roles, refreshRoles }) {
         }
 
         if (editingRoleName) {
+            const trimmedName = name.trim();
+            if (!trimmedName) {
+                alert('Role name cannot be empty');
+                return;
+            }
             const res = await fetch(`${API_BASE}/v1/roles/${editingRoleName}`, {
                 ...fetchConfig,
                 method: 'PUT',
                 headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({ policies: activePolicies, can_create: canCreate, expires_at: expiryVal })
+                body: JSON.stringify({ name: trimmedName, policies: activePolicies, can_create: canCreate, expires_at: expiryVal })
             });
             if (res.ok) {
                 setEditingRoleName(null);
@@ -895,7 +900,8 @@ function RoleManager({ roles, refreshRoles }) {
                 setCanCreate(false);
                 refreshRoles();
             } else {
-                alert('Failed to update role');
+                const errData = await res.json().catch(() => null);
+                alert(`Failed to update role: ${errData?.error || 'unknown error'}`);
             }
             return;
         }
@@ -1066,7 +1072,7 @@ function RoleManager({ roles, refreshRoles }) {
                     <form onSubmit={handleCreate} className="space-y-4">
                         <div>
                             <label className="block text-xs text-gray-400 mb-1">Role Name</label>
-                            <input type="text" required value={name} onChange={e => setName(e.target.value)} disabled={!!editingRoleName} className="w-full bg-gray-900 border border-gray-700 rounded p-2 text-white text-sm disabled:opacity-50 focus:border-blue-500 outline-none" placeholder="e.g. ci-runner" />
+                            <input type="text" required value={name} onChange={e => setName(e.target.value)} className="w-full bg-gray-900 border border-gray-700 rounded p-2 text-white text-sm focus:border-blue-500 outline-none" placeholder="e.g. ci-runner" />
                         </div>
 
                         <div className="pt-2 pb-1 border-b border-gray-700">
@@ -1139,7 +1145,7 @@ function RoleManager({ roles, refreshRoles }) {
                         </div>
 
                         <button type="submit" className="w-full bg-blue-600 hover:bg-blue-500 text-white px-4 py-3 rounded text-sm font-bold transition mt-4 shadow-lg">
-                            {editingRoleName ? 'Save Policy Changes' : 'Generate Role Token'}
+                            {editingRoleName ? 'Save Role Changes' : 'Generate Role Token'}
                         </button>
                     </form>
                 </div>

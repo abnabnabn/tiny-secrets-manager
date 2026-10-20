@@ -133,16 +133,33 @@ func TestStore_Roles(t *testing.T) {
 	assert.Equal(t, "role2", r2.Name)
 	assert.True(t, r2.IsAdmin)
 
-	// 4. List Roles
+	// 4. Update and Rename Role
+	err = st.UpdateRole(ctx, "role1", "role1-renamed", policies, true, nil)
+	require.NoError(t, err)
+
+	_, err = st.GetRoleByName(ctx, "role1")
+	assert.ErrorIs(t, err, sql.ErrNoRows)
+
+	r1Renamed, err := st.GetRoleByName(ctx, "role1-renamed")
+	require.NoError(t, err)
+	assert.Equal(t, "role1-renamed", r1Renamed.Name)
+	assert.True(t, r1Renamed.CanCreate)
+
+	// Verify token hash is still mapped to the renamed role
+	r1ByHash, err := st.GetRoleByHash(ctx, hash1[:])
+	require.NoError(t, err)
+	assert.Equal(t, "role1-renamed", r1ByHash.Name)
+
+	// 5. List Roles
 	roles, err := st.ListRoles(ctx)
 	require.NoError(t, err)
 	assert.Len(t, roles, 2)
 
-	// 5. Delete Role
-	err = st.DeleteRole(ctx, "role1")
+	// 6. Delete Role
+	err = st.DeleteRole(ctx, "role1-renamed")
 	require.NoError(t, err)
 
-	_, err = st.GetRoleByName(ctx, "role1")
+	_, err = st.GetRoleByName(ctx, "role1-renamed")
 	assert.ErrorIs(t, err, sql.ErrNoRows)
 }
 

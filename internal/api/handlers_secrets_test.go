@@ -80,7 +80,7 @@ func TestHandlePutAndGetSecret(t *testing.T) {
 	})
 
 	// 5. Grant global CREATE permission and try again
-	require.NoError(t, db.UpdateRole(context.Background(), "my-role", emptyPolicies, true, nil))
+	require.NoError(t, db.UpdateRole(context.Background(), "my-role", "my-role", emptyPolicies, true, nil))
 
 	t.Run("role_creates_secret", func(t *testing.T) {
 		body := map[string]interface{}{
