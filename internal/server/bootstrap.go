@@ -24,10 +24,12 @@ var BcryptCost = 14
 
 // generateRandomString returns a cryptographically random URL-safe base64 string
 // of at least n bytes of entropy.
-func generateRandomString(n int) string {
+func generateRandomString(n int) (string, error) {
 	b := make([]byte, n)
-	_, _ = rand.Read(b)
-	return base64.RawURLEncoding.EncodeToString(b)
+	if _, err := rand.Read(b); err != nil {
+		return "", fmt.Errorf("failed to generate random bytes: %w", err)
+	}
+	return base64.RawURLEncoding.EncodeToString(b), nil
 }
 
 // Bootstrap loads the configuration from configPath, or creates a new one if it
@@ -45,7 +47,9 @@ func Bootstrap(logger *slog.Logger, configPath string) (*config.Config, error) {
 	logger.Info("no configuration found, initiating self-bootstrap...")
 
 	mKey := make([]byte, 32)
-	_, _ = rand.Read(mKey)
+	if _, err := rand.Read(mKey); err != nil {
+		return nil, fmt.Errorf("failed to generate master key: %w", err)
+	}
 
 	cfg := &config.Config{
 		MasterKey: base64.StdEncoding.EncodeToString(mKey),
@@ -88,7 +92,11 @@ func SeedAdminUser(ctx context.Context, db *store.Store, adminUser, adminPass, a
 		pass = os.Getenv("TSM_ADMIN_PASS")
 	}
 	if pass == "" {
-		pass = generateRandomString(12)
+		var err error
+		pass, err = generateRandomString(12)
+		if err != nil {
+			return fmt.Errorf("failed to generate admin password: %w", err)
+		}
 	}
 
 	token := adminToken
@@ -96,7 +104,11 @@ func SeedAdminUser(ctx context.Context, db *store.Store, adminUser, adminPass, a
 		token = os.Getenv("TSM_ADMIN_TOKEN")
 	}
 	if token == "" {
-		token = generateRandomString(32)
+		var err error
+		token, err = generateRandomString(32)
+		if err != nil {
+			return fmt.Errorf("failed to generate admin token: %w", err)
+		}
 	}
 
 	hash, err := bcrypt.GenerateFromPassword([]byte(pass), BcryptCost)
