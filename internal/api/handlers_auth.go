@@ -67,7 +67,11 @@ func (s *Server) handleLogin(w http.ResponseWriter, r *http.Request) {
 
 	// Generate a session token
 	raw := make([]byte, 32)
-	_, _ = rand.Read(raw)
+	if _, err := rand.Read(raw); err != nil {
+		s.logger.Error("failed to generate session token entropy", "err", err)
+		s.respondError(w, http.StatusInternalServerError, "internal server error")
+		return
+	}
 	sessionToken := base64.RawURLEncoding.EncodeToString(raw)
 	tokenHash := sha256.Sum256([]byte(sessionToken))
 
