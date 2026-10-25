@@ -99,7 +99,8 @@ func (s *Server) handlePutSecret(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 	} else {
-		if !client.CanCreate && !client.IsAdmin {
+		canCreateSecret := client.IsAdmin || client.Can(http.MethodPut, key) || (client.CanCreate && len(client.Policies) == 0)
+		if !canCreateSecret {
 			s.respondError(w, http.StatusForbidden, "forbidden")
 			return
 		}
