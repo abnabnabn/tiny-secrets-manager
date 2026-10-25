@@ -118,6 +118,33 @@ func TestHandlePutAndGetSecret(t *testing.T) {
 
 		assert.Equal(t, http.StatusForbidden, rec.Code)
 	})
+
+	t.Run("scoped_role_creates_secret_outside_policy_forbidden", func(t *testing.T) {
+		scopedToken := "scoped-role-token"
+		scopedHash := sha256.Sum256([]byte(scopedToken))
+		scopedPolicies, _ := json.Marshal([]config.Policy{
+			{Prefix: "dev.*", Methods: []string{"GET", "PUT"}},
+		})
+		require.NoError(t, db.PutRole(context.Background(), "scoped-role", scopedHash[:], scopedPolicies, false, true, nil))
+
+		// Allowed within dev.* policy prefix
+		bodyDev := map[string]interface{}{"value": "dev-val"}
+		bDev, _ := json.Marshal(bodyDev)
+		reqDev := httptest.NewRequest("PUT", "/v1/secrets/dev.app.secret", bytes.NewBuffer(bDev))
+		reqDev.Header.Set("Authorization", "Bearer "+scopedToken)
+		recDev := httptest.NewRecorder()
+		mux.ServeHTTP(recDev, reqDev)
+		assert.Equal(t, http.StatusNoContent, recDev.Code)
+
+		// Forbidden outside dev.* policy prefix
+		bodyProd := map[string]interface{}{"value": "prod-val"}
+		bProd, _ := json.Marshal(bodyProd)
+		reqProd := httptest.NewRequest("PUT", "/v1/secrets/prod.app.secret", bytes.NewBuffer(bProd))
+		reqProd.Header.Set("Authorization", "Bearer "+scopedToken)
+		recProd := httptest.NewRecorder()
+		mux.ServeHTTP(recProd, reqProd)
+		assert.Equal(t, http.StatusForbidden, recProd.Code)
+	})
 }
 
 func TestHandleDeleteSecret(t *testing.T) {
