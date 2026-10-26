@@ -15,7 +15,8 @@ import (
 )
 
 func isProtectedRole(name string) bool {
-	return name == "admin" || strings.HasPrefix(name, "session_")
+	trimmed := strings.TrimSpace(name)
+	return trimmed == "admin" || strings.HasPrefix(trimmed, "session_")
 }
 
 func (s *Server) handleListRoles(w http.ResponseWriter, r *http.Request) {
@@ -63,7 +64,13 @@ func (s *Server) handleCreateRole(w http.ResponseWriter, r *http.Request) {
 		CanCreate bool            `json:"can_create"`
 		ExpiresAt *time.Time      `json:"expires_at"`
 	}
-	if err := json.NewDecoder(r.Body).Decode(&req); err != nil || req.Name == "" {
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		s.respondError(w, http.StatusBadRequest, "invalid payload")
+		return
+	}
+
+	req.Name = strings.TrimSpace(req.Name)
+	if req.Name == "" {
 		s.respondError(w, http.StatusBadRequest, "invalid payload")
 		return
 	}
@@ -106,7 +113,7 @@ func (s *Server) handleUpdateRole(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	name := r.PathValue("name")
+	name := strings.TrimSpace(r.PathValue("name"))
 	if name == "" {
 		s.respondError(w, http.StatusBadRequest, "missing name")
 		return
@@ -169,7 +176,12 @@ func (s *Server) handleDeleteRole(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	name := r.PathValue("name")
+	name := strings.TrimSpace(r.PathValue("name"))
+	if name == "" {
+		s.respondError(w, http.StatusBadRequest, "missing name")
+		return
+	}
+
 	if isProtectedRole(name) {
 		s.respondError(w, http.StatusBadRequest, "cannot modify protected role")
 		return
@@ -195,7 +207,7 @@ func (s *Server) handleRegenerateRoleToken(w http.ResponseWriter, r *http.Reques
 		return
 	}
 
-	name := r.PathValue("name")
+	name := strings.TrimSpace(r.PathValue("name"))
 	if name == "" {
 		s.respondError(w, http.StatusBadRequest, "missing name")
 		return
