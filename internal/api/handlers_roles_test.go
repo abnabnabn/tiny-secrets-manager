@@ -7,6 +7,7 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"net/url"
 	"testing"
 	"time"
 
@@ -306,7 +307,7 @@ func TestHandleProtectedRoles(t *testing.T) {
 	_, db, mux, adminToken := setupTestServer(t)
 	defer db.Close()
 
-	protectedNames := []string{"admin", "session_user_12345"}
+	protectedNames := []string{"admin", "session_user_12345", " admin ", " session_user_12345 ", "admin\t"}
 
 	for _, name := range protectedNames {
 		t.Run("create_protected_"+name, func(t *testing.T) {
@@ -334,7 +335,7 @@ func TestHandleProtectedRoles(t *testing.T) {
 			}
 			b, _ := json.Marshal(body)
 
-			req := httptest.NewRequest("PUT", "/v1/roles/"+name, bytes.NewBuffer(b))
+			req := httptest.NewRequest("PUT", "/v1/roles/"+url.PathEscape(name), bytes.NewBuffer(b))
 			req.Header.Set("Authorization", "Bearer "+adminToken)
 			rec := httptest.NewRecorder()
 			mux.ServeHTTP(rec, req)
@@ -343,7 +344,7 @@ func TestHandleProtectedRoles(t *testing.T) {
 		})
 
 		t.Run("delete_protected_"+name, func(t *testing.T) {
-			req := httptest.NewRequest("DELETE", "/v1/roles/"+name, nil)
+			req := httptest.NewRequest("DELETE", "/v1/roles/"+url.PathEscape(name), nil)
 			req.Header.Set("Authorization", "Bearer "+adminToken)
 			rec := httptest.NewRecorder()
 			mux.ServeHTTP(rec, req)
@@ -352,7 +353,7 @@ func TestHandleProtectedRoles(t *testing.T) {
 		})
 
 		t.Run("regenerate_protected_"+name, func(t *testing.T) {
-			req := httptest.NewRequest("POST", "/v1/roles/"+name+"/regenerate", nil)
+			req := httptest.NewRequest("POST", "/v1/roles/"+url.PathEscape(name)+"/regenerate", nil)
 			req.Header.Set("Authorization", "Bearer "+adminToken)
 			rec := httptest.NewRecorder()
 			mux.ServeHTTP(rec, req)
