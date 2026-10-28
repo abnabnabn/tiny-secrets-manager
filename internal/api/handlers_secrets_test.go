@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"net/http"
 	"net/http/httptest"
+	"net/url"
 	"testing"
 
 	"tiny-secrets-manager/internal/config"
@@ -15,6 +16,48 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
+
+func TestSecretKeyValidation(t *testing.T) {
+	_, db, mux, adminToken := setupTestServer(t)
+	defer db.Close()
+
+	invalidKeys := []string{
+		"  ",
+		"key_with_space ",
+		" key_with_space",
+		"key\nwith_newline",
+		"key\x00with_null",
+	}
+
+	for i, k := range invalidKeys {
+		escaped := url.PathEscape(k)
+		t.Run(fmt.Sprintf("invalid_put_%d", i), func(t *testing.T) {
+			body := map[string]string{"value": "val"}
+			b, _ := json.Marshal(body)
+			req := httptest.NewRequest("PUT", "/v1/secrets/"+escaped, bytes.NewBuffer(b))
+			req.Header.Set("Authorization", "Bearer "+adminToken)
+			rec := httptest.NewRecorder()
+			mux.ServeHTTP(rec, req)
+			assert.Equal(t, http.StatusBadRequest, rec.Code)
+		})
+
+		t.Run(fmt.Sprintf("invalid_get_%d", i), func(t *testing.T) {
+			req := httptest.NewRequest("GET", "/v1/secrets/"+escaped, nil)
+			req.Header.Set("Authorization", "Bearer "+adminToken)
+			rec := httptest.NewRecorder()
+			mux.ServeHTTP(rec, req)
+			assert.Equal(t, http.StatusBadRequest, rec.Code)
+		})
+
+		t.Run(fmt.Sprintf("invalid_delete_%d", i), func(t *testing.T) {
+			req := httptest.NewRequest("DELETE", "/v1/secrets/"+escaped, nil)
+			req.Header.Set("Authorization", "Bearer "+adminToken)
+			rec := httptest.NewRecorder()
+			mux.ServeHTTP(rec, req)
+			assert.Equal(t, http.StatusBadRequest, rec.Code)
+		})
+	}
+}
 
 func TestHandlePutAndGetSecret(t *testing.T) {
 	_, db, mux, adminToken := setupTestServer(t)
