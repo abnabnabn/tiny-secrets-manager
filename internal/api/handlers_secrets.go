@@ -6,13 +6,33 @@ import (
 	"encoding/json"
 	"net/http"
 	"strconv"
+	"strings"
+	"unicode"
 
 	"tiny-secrets-manager/internal/config"
 )
 
+// isValidSecretKey checks that the given secret key is non-empty, does not have
+// untrimmed leading or trailing whitespace, and contains no control characters.
+func isValidSecretKey(key string) bool {
+	if key == "" || strings.TrimSpace(key) != key {
+		return false
+	}
+	for _, r := range key {
+		if unicode.IsControl(r) {
+			return false
+		}
+	}
+	return true
+}
+
 func (s *Server) handleGetSecret(w http.ResponseWriter, r *http.Request) {
 	client := r.Context().Value(clientCtxKey).(Client)
 	key := r.PathValue("key")
+	if !isValidSecretKey(key) {
+		s.respondError(w, http.StatusBadRequest, "invalid secret key")
+		return
+	}
 	if !client.Can(r.Method, key) {
 		s.respondError(w, http.StatusForbidden, "forbidden")
 		return
@@ -81,6 +101,10 @@ func (s *Server) handleResolveSecret(w http.ResponseWriter, r *http.Request) {
 func (s *Server) handlePutSecret(w http.ResponseWriter, r *http.Request) {
 	client := r.Context().Value(clientCtxKey).(Client)
 	key := r.PathValue("key")
+	if !isValidSecretKey(key) {
+		s.respondError(w, http.StatusBadRequest, "invalid secret key")
+		return
+	}
 
 	ctx, cancel := context.WithTimeout(r.Context(), dbTimeout)
 	defer cancel()
@@ -162,6 +186,10 @@ func (s *Server) handlePutSecret(w http.ResponseWriter, r *http.Request) {
 func (s *Server) handleDeleteSecret(w http.ResponseWriter, r *http.Request) {
 	client := r.Context().Value(clientCtxKey).(Client)
 	key := r.PathValue("key")
+	if !isValidSecretKey(key) {
+		s.respondError(w, http.StatusBadRequest, "invalid secret key")
+		return
+	}
 	if !client.Can(r.Method, key) {
 		s.respondError(w, http.StatusForbidden, "forbidden")
 		return
