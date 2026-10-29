@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"net/http"
 	"net/http/httptest"
+	"net/url"
 	"testing"
 
 	"tiny-secrets-manager/internal/config"
@@ -117,6 +118,42 @@ func TestHandlePutAndGetSecret(t *testing.T) {
 		mux.ServeHTTP(rec, req)
 
 		assert.Equal(t, http.StatusForbidden, rec.Code)
+	})
+
+	t.Run("invalid_secret_key_validation", func(t *testing.T) {
+		invalidKeys := []string{
+			" leading_space",
+			"trailing_space ",
+			"bad\nkey",
+			"bad\tkey",
+			"bad\x00key",
+		}
+
+		for _, ik := range invalidKeys {
+			escapedKey := url.PathEscape(ik)
+			// Test GET
+			reqGet := httptest.NewRequest("GET", "/v1/secrets/"+escapedKey, nil)
+			reqGet.Header.Set("Authorization", "Bearer "+adminToken)
+			recGet := httptest.NewRecorder()
+			mux.ServeHTTP(recGet, reqGet)
+			assert.Equal(t, http.StatusBadRequest, recGet.Code, "expected 400 for GET key %q", ik)
+
+			// Test PUT
+			body := map[string]string{"value": "val"}
+			b, _ := json.Marshal(body)
+			reqPut := httptest.NewRequest("PUT", "/v1/secrets/"+escapedKey, bytes.NewBuffer(b))
+			reqPut.Header.Set("Authorization", "Bearer "+adminToken)
+			recPut := httptest.NewRecorder()
+			mux.ServeHTTP(recPut, reqPut)
+			assert.Equal(t, http.StatusBadRequest, recPut.Code, "expected 400 for PUT key %q", ik)
+
+			// Test DELETE
+			reqDel := httptest.NewRequest("DELETE", "/v1/secrets/"+escapedKey, nil)
+			reqDel.Header.Set("Authorization", "Bearer "+adminToken)
+			recDel := httptest.NewRecorder()
+			mux.ServeHTTP(recDel, reqDel)
+			assert.Equal(t, http.StatusBadRequest, recDel.Code, "expected 400 for DELETE key %q", ik)
+		}
 	})
 }
 
