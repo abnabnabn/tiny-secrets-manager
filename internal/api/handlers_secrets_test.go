@@ -118,6 +118,42 @@ func TestHandlePutAndGetSecret(t *testing.T) {
 
 		assert.Equal(t, http.StatusForbidden, rec.Code)
 	})
+
+	t.Run("invalid_secret_keys_rejected", func(t *testing.T) {
+		invalidPathKeys := []struct {
+			urlPath string
+			keyName string
+		}{
+			{urlPath: "/v1/secrets/%20leadingSpace", keyName: " leadingSpace"},
+			{urlPath: "/v1/secrets/trailingSpace%20", keyName: "trailingSpace "},
+			{urlPath: "/v1/secrets/control%07char", keyName: "control\x07char"},
+		}
+
+		for _, item := range invalidPathKeys {
+			// PUT
+			body := map[string]string{"value": "val"}
+			b, _ := json.Marshal(body)
+			reqPut := httptest.NewRequest("PUT", item.urlPath, bytes.NewBuffer(b))
+			reqPut.Header.Set("Authorization", "Bearer "+adminToken)
+			recPut := httptest.NewRecorder()
+			mux.ServeHTTP(recPut, reqPut)
+			assert.Equal(t, http.StatusBadRequest, recPut.Code, "PUT should reject invalid key: %q", item.keyName)
+
+			// GET
+			reqGet := httptest.NewRequest("GET", item.urlPath, nil)
+			reqGet.Header.Set("Authorization", "Bearer "+adminToken)
+			recGet := httptest.NewRecorder()
+			mux.ServeHTTP(recGet, reqGet)
+			assert.Equal(t, http.StatusBadRequest, recGet.Code, "GET should reject invalid key: %q", item.keyName)
+
+			// DELETE
+			reqDel := httptest.NewRequest("DELETE", item.urlPath, nil)
+			reqDel.Header.Set("Authorization", "Bearer "+adminToken)
+			recDel := httptest.NewRecorder()
+			mux.ServeHTTP(recDel, reqDel)
+			assert.Equal(t, http.StatusBadRequest, recDel.Code, "DELETE should reject invalid key: %q", item.keyName)
+		}
+	})
 }
 
 func TestHandleDeleteSecret(t *testing.T) {
